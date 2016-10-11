@@ -1,0 +1,89 @@
+INSERTPOINT nao é uma "classe". É o ponto de insercao. Tem que ter o parent, e o indice onde sera inserido no parent 
+
+chama pagina
+	SERVER: retorna o html com loader
+		pega o htmx da pagina e identifica o html template
+		obtem o html do template > TEMPLATE
+		SERVER:FN-PARSEPAGE(page=TEMPLATE) > json
+		declarar script X
+	CLIENT:
+		new X
+		X showLoading
+		X FN-CREATEELEMENTS(JSON=json, ROOT=html)
+		obtem ponto de insercao>INSERTPOINT
+		X chama FN-GETJS(pageName=name, insertPoint=INSERTPOINT, callback(controller)=nao faz nada)
+		X closeLoading
+
+FN-CREATEELEMENTS(json=>$JSON, insertPoint=>$IP)
+	cria os elementos dentro de $IP
+	registra iterators
+	adiciona os scripts e css de requiredSources
+
+SERVER:FN-PARSEPAGE(page=>$PAGE)
+	prepara os componentes (que jao em formato html)
+		pega os requiredSources
+	preparar iterators
+	preparar labels
+	-se o root do json se nao tiver name, deve ser utilizado apenas os children
+	retornar o json
+
+FN-GETJS(resName=>$RN, insertPoint=>$IP, callback=>$CB)
+	(
+		callback(struct, fncontroller):
+			controller = new fncontroller
+			se controler for modal
+				set ctx on insertpoint
+			se struct
+				X FN-CREATEELEMENTS(JSON=struct, insertPoint=$IP)
+			X setController(new fncontroller, $CB) > X
+	) > $fncb
+	se name existe importedMap[name]
+		registrar callback:
+			callback[$RN]= $fncb
+		create script element SERVER:FN-GETJS($RN)
+	se nao
+		$fncb(importedMap[name].json, importedMap[name].fnjs)
+
+X.setController(controller, callback=>$CB)
+	eval = controller._x_eval
+	cria acorde com injetaveis e executa
+		Cada nota do acorde:
+			se for import
+				FN-GETJS(rs name, null, callback(controller)=set na variavel injetavel o controller)
+			se for service
+				prepara o service
+			se for modal
+				new X
+				pegar o elemento parent=>el
+				FN-GETJS(rs name, insertPoint=el, callback(controller)=prepara os metodos de modal (toggle) e set na variavel injetavel o controller)
+			ao terminar o acorde:
+				$CB(controller)
+				xdefaultservices.init();
+				xcomponents.init()
+					addcomponents (%components%)
+					initComponents: prepare methods
+					createComponentConstructors
+				execWhenReady
+					faz o load dos components
+				updateAllObjects();
+				updateXObjects();
+				fazer o delay do document ready pra esse ponto !!!!!!
+				controller.onInit
+
+X$.register(name, json, fnjs)
+	callback[name]>cb
+	del callback[name]
+	importedMap[name] = {json, fnjs}
+	cb(json, fnjs)
+
+SERVER:FN-GETJS(resName=>$RN)
+	se tem pagina html de nome igual a $RN
+		obtem o html da pagina de nome igual a $RN
+		SERVER:FN-PARSEPAGE($RN) > json
+	obtem o js da pagina de nome igual a $RN
+	preparar js
+		esprima>js_e
+		(X$.register($RN, json, function(X)js_e + eval + injetaveis);>js_result
+	retornar js_result
+
+

@@ -189,4 +189,12 @@ public class XContext {
 	public static final void removeLoginCallback(LoginCallback<?> onLogin) {
 		onLoginList.remove(onLogin);
 	}
+
+	public static final boolean isUserAllowedTo(String function) {
+		return getUser().getAvailableFunctions() != null && getUser().getAvailableFunctions().contains(function);
+	}
+	
+	public static final boolean isUserInRole(String role) {
+		return getUser().getRole() != null && getUser().getRole().equals(role);
+	}
 }

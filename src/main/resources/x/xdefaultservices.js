@@ -1,10 +1,10 @@
 var userService;
 
 function init(){
-	X.debug("xstartup", "XDefaultServices INIT");
-	userService = X.bindService("XUserService");
+	thisX.debug("xstartup", "XDefaultServices INIT");
+	userService = thisX.bindService("XUserService");
 	
-	X.debug("xstartup", "XDefaultServices done");
+	thisX.debug("xstartup", "XDefaultServices done");
 }
 
 function login(login, password, callback){
@@ -28,8 +28,18 @@ function logout(callback){
 	userService.logout(callback, null);
 }
 
+function isUserAllowedTo(action){
+	return window.xuser && window.xuser.availableFunctions && window.xuser.availableFunctions.indexOf(action) >= 0;
+}
+
+function isUserInRole(role){
+	return window.xuser && window.xuser.role == role;
+}
+
 _expose(init);
 _external(login);
 _external(createUser);
 _external(logout);
 _external(getSessionId);
+_external(isUserAllowedTo);
+_external(isUserInRole);

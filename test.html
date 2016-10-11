@@ -1,0 +1,29 @@
+<table style="border: 1px solid black;" id="undefined">
+    <thead>
+    <th></th>
+    <th>Nome</th>
+    <th>Sexo</th>
+    <th>Gosta de filmes</th>
+    </thead>
+    <tbody>
+    $for (pessoa in pessoaList with i){
+    <tr>
+        <td>
+            <xscript data-xscript="i"></xscript>
+        </td>
+        <td>
+            <xscript data-xscript="pessoa.dados.nome"></xscript>
+        </td>
+        <td>
+            <xscript data-xscript="pessoa.dados.sexo"></xscript>
+        </td>
+        <td>
+            <xscript data-xscript="pessoa.gostaDeFilmes ? 'Sim' : 'Nao'"></xscript>
+        </td>
+        <td>
+            <button onclick="this.remove(i)">Remove</button>
+        </td>
+        }
+    </tr>
+    </tbody>
+</table><br>

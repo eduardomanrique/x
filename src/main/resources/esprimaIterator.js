@@ -45,7 +45,7 @@ function memberExpression(v, ident, call){
 function functionDeclaration(v, ident, makeVarDeclaration){
 	var body = iterate(v.body, ident + '  ');
 	return (makeVarDeclaration ? 'var ' + v.id.name + ' = ' : '') + 
-		'X.$(function' + (v.id ? ' ' + v.id.name: '') + parametersDeclaration(v.params, ident) + '{' + (body ? '\n' + body + ident : '') + '}, _x_meta)' +
+		'X.$(function' + (v.id ? ' ' + v.id.name: '') + parametersDeclaration(v.params, ident) + '{' + (body ? '\n' + body + ident : '') + '})' +
 		(makeVarDeclaration ? ';' : ''); 
 }
 function objectExpression(v, ident){
@@ -102,7 +102,7 @@ function callExpression(v, ident, otherCall){
 			otherCall.push(item);
 		}
 	}
-	return s + '(' + parametersCall(v.arguments, ident) + (appendMeta ? (v.arguments.length > 0 ? ', ' : '') + '_x_meta' : '') + ')';
+	return s + '(' + parametersCall(v.arguments, ident) + (appendMeta ? (v.arguments.length > 0 ? ', ' : '') : '') + ')';
 }
 function expression(v, ident){
 	if(v.type == "Identifier"){
@@ -207,7 +207,7 @@ function processItem(item, ident){
 	}else if(item.type == "ExpressionStatement"){
 		return ident + expression(item.expression, ident) + ';';
 	}else if(item.type == "ReturnStatement"){; 
-		return ident + 'return ' + expression(item.argument, ident) + ';';
+		return ident + 'return' + (item.argument ? ' ' + expression(item.argument, ident) : '') + ';';
 	}else if(item.type == "IfStatement"){ 
 		return ident + ifStatement(item, ident);
 	}else if(item.type == "WhileStatement"){
@@ -262,4 +262,20 @@ function getFirstLevelFunctions(parsed){
 		}
 	}
 	return x.join("|");
+}
+
+function getFirstLevelVariables(parsed){
+	var x = [];
+	for(var iFn in parsed.body){
+		var item = parsed.body[iFn];
+		if(item.type == "VariableDeclaration"){
+			for(var i in item.declarations){
+				var d = item.declarations[i];
+				if(!d.init || d.init.type != "FunctionExpression"){
+					x.push(d.id.name);
+				}
+			}
+		}
+	}
+	return x.join(" ");
 }

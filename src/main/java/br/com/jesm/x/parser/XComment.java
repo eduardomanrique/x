@@ -10,4 +10,8 @@ public class XComment extends XText {
 		this.addString("-->");
 	}
 
+	@Override
+	public String toJson() {
+		return "";
+	}
 }

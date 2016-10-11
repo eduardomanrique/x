@@ -30,4 +30,6 @@ public @interface XMethod {
 	XMethod.WEBMethod forceMethod() default XMethod.WEBMethod.POST;
 
 	boolean useWebObjects() default false;
+
+	boolean responseInOutputStream() default false;
 }

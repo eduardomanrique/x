@@ -1,55 +1,56 @@
-
+//all functions to be called on screen is ready
 var execWhenReady = [];
 var calledReady = false;
+//this method is written on server
 function _addExecuteWhenReady(fn){
-	execWhenReady.push(fn);
-}
-var execOnEnd = [];
-function _addExecuteOnEnd(fn){
-	execOnEnd.push(fn);
+	if(fn){
+		execWhenReady.push(fn);		
+	}
 }
 
+function setModal(){
+    thisX._loaded = true;
+}
+
+//private method executed on screen is ready
 function ready() {
 	if(calledReady){
 		return;
 	}
-	X.debug("xstartup", "READY function");
+	thisX.debug("xstartup", "READY function");
 	calledReady = true;
-	X._loaded = true;
+	thisX._loaded = true;
 	xdefaultservices.init();
 	var isRemote = %is_remote%;
 	if(!isRemote){
-		X.debug("xstartup", "COMPONENTS Init..");
-		xcomponents.init();
-		X.debug("xstartup", "Default Services Init..");
+		thisX.debug("xstartup", "COMPONENTS Init..");
+		thisX.debug("xstartup", "Default Services Init..");
 		xutil.each(execWhenReady, function(item){
-			X.debug("xstartup", "Exec execWhenReady " + item);
+			thisX.debug("xstartup", "Exec execWhenReady " + item);
 			item();
 		});
-		X.debug("xstartup", "XObj Init..");
-		xobj.init();
-		setTimeout(function(){
-			xutil.each(execOnEnd, function(item){
-				X.debug("xstartup", "Exec execOnEnd " + item);
-				item();
-			});
-		},100);
 	}
-	X.debug("xstartup", "READY done");
+	if(!X$._startedMutationObserver){
+	    X$._startedMutationObserver = true;
+	    X$._startMutationObserver();
+	}
+	thisX.debug("xstartup", "READY done");
 }
 
+//onunload event
 function onUnloadCall(){
 	var onExit;
 	try{
-		onExit = xobj.evalOnMainController('onExit');	
+		onExit = thisX.eval('onExit');	
 	}catch(e){}
 	if(onExit){
 		return onExit();
 	}
 }
 
+//method called when X instantiation is finished
 function onStart(){
-	X.debug("xstartup", "onStart");
+	thisX.debug("xstartup", "onStart");
 	if ( document.addEventListener ) {
 		document.addEventListener( "DOMContentLoaded", function(){
 			document.removeEventListener( "DOMContentLoaded", arguments.callee, false );
@@ -82,9 +83,9 @@ function onStart(){
 		});
 	}
 	window.onbeforeunload = onUnloadCall;
-	X.debug("xstartup", "onStart done");
+	thisX.debug("xstartup", "onStart done");
 }
-	
-_external(onStart);
+
+_expose(onStart);
 _external(_addExecuteWhenReady);
-_external(_addExecuteOnEnd);
+_expose(setModal);

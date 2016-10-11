@@ -1,78 +1,68 @@
 var comps;
 var components;
-function setComponents(c){
+function _setComponents(c){
 	components = c;
 }
 
+//called on initialization of X
 function init(){
 	try{
-		X.debug("xstartup", "XComponents INIT");
+		thisX.debug("xstartup", "XComponents INIT");
 		%xcomponents%
 		comps = _comps
-		X.debug("xstartup", "XComponents setComponents");
-		setComponents(components);
-		X.debug("xstartup", "XComponents initComponent");
+		thisX.debug("xstartup", "XComponents _setComponents");
+		_setComponents(components);
+		thisX.debug("xstartup", "XComponents initComponent");
 		initComponents();
-		X.debug("xstartup", "XComponents buildComponent");
-		buildComponents();
+		thisX.debug("xstartup", "XComponents buildComponent");
+		createComponentConstructors();
 	}catch(e){
 		var msg = "Error loading custom components: " + e.message;
 		xlog.error(msg, e);
 		throw new Error(msg);
 	}
-	X.debug("xstartup", "XComponents INIT done");
+	thisX.debug("xstartup", "XComponents INIT done");
 }
 
-var registeredObjects = {};
-function eachRegisteredObjects(each){
-	var list = [];
-	for(var k in registeredObjects){
-		list = list.concat(registeredObjects[k]);
-	}
-	xutil.each(list, each);
-}
-
-function unregisterObjectContext(ctx){
-	delete registeredObjects[ctx];
-}
-
-function buildCreateFunction(compName){
-	return function(comp, xmeta){
+//constructor of components
+function _buildCreateFunction(compName){
+	return function(comp){
 		var result = {
-			_x_comp: X.comp[compName]
+			_x_comp: thisX.comp[compName]
 		};
 		for(var k in comp){
 			result[k] = comp[k];
 		}
-		result._x_ctx = xmeta.id;
 		return result;
 	}
 }
 
-function startComp(_html, comp, fnInsert){
-	var _div = document.createElement('div');
+//Initialization method called when the component is dymanic created
+function _startComp(_html, comp, fnInsert){
+	var _div = xdom.createElement('div');
 	_div.innerHTML = _html;
 	var xid = comp.xid;
 	var len = _div.childNodes.length;
 	xutil.range(0, len, function(j){
 		if(xid){
 			if(j == 0){
-				_div.childNodes[0].setAttribute( "_s_xid_", xid);
+				xdom.setAtt(_div.childNodes[0], "_s_xid_", xid);
 			}
 			if(j == len -1){
-				_div.childNodes[0].setAttribute("_e_xid_", xid);
+				xdom.setAtt(_div.childNodes[0], "_e_xid_", xid);
 			}					
 		}
 		fnInsert(_div.childNodes[0]);	
 	});
 }
 
-function insertComp(handle, xid, beforeInsideAfter){
+//private auxiliary method to dynamically insert components 
+function _insertComp(handle, xid, beforeInsideAfter){
 	var _html = handle._x_comp.getHtml(handle);
 	if(handle.innerHTML){
 		_html = _html.replace('{xbody}', handle.innerHTML);
 	}
-	startComp(_html, handle, function(node){
+	_startComp(_html, handle, function(node){
 		if(beforeInsideAfter == -1){
 			var el = xdom.getElementsByAttribute("_s_xid_", xid)[0] || document.getElementById(xid);
 			el.parentNode.insertBefore(node, el);
@@ -83,117 +73,102 @@ function insertComp(handle, xid, beforeInsideAfter){
 			var el = xdom.getElementsByAttribute("_e_xid_", xid)[0] || document.getElementById(xid);
 			el.parentNode.insertBefore(node, el.nextSibling);
 		}
-		postCreateComp(handle, xid);
-		configComps(handle._x_ctx);
+		_postCreateComp(handle, xid);
+		_configComps();
 	});
 }
 
-function postCreateComp(handle, xid){
-	if(handle._x_comp.onReady){
-		var ctx = {
-				ctxId: handle._x_ctx,
-				eval: function(s){
-					return xobj.evalOnContext(this.ctxId, s);
-				}
-		}
-		handle._x_comp.onReady(handle, ctx);
+//private
+function _postCreateComp(ctx){
+	if(ctx.onReady){
+		ctx.onReady();
 	};
 }
 
-function configComps(ctxId){
-	xinputs.setContextOnInputs(ctxId);
-	xinputs.configEvents();
-}
-
+//start component's methods
 function initComponents(){
-	X.comp = components;
-	X.comp.insertBefore = function(handle, xid){
-		insertComp(handle, xid, -1);
+	thisX.comp = components;
+	thisX.comp.insertBefore = function(handle, xid){
+		_insertComp(handle, xid, -1);
 	};
-	X.comp.insertAfter = function(handle, xid){
-		insertComp(handle, xid, 1);
+	thisX.comp.insertAfter = function(handle, xid){
+		_insertComp(handle, xid, 1);
 	};
-	X.comp.append = function(handle, xid){
-		insertComp(handle, xid, 0);
+	thisX.comp.append = function(handle, xid){
+		_insertComp(handle, xid, 0);
 	};
-	X.comp.registerObject = function(ctx, obj){
-		var ctxId = ctx.ctxId || ctx;
-		if(!registeredObjects[ctxId]){
-			registeredObjects[ctxId] = [];
-		}
-		registeredObjects[ctxId].push(obj);
-	};
-	X.comp.updateValue = function(comp){
+	thisX.comp.updateValue = function(comp){
 		xobj.updateObject(comp);
 	}
 };
 
-function buildComponents(){
+//create component's constructors
+function createComponentConstructors(){
 	xutil.each(comps, function(comp){
 		var compName = comp[0];
-		components['new' + compName[0].toUpperCase() + compName.substring(1)] = buildCreateFunction(compName);
+		components['new' + compName[0].toUpperCase() + compName.substring(1)] = _buildCreateFunction(compName);
 	});
 }
 
-var _postCreate = [];
-function _registerPostCreateComponent(compName, xid, param){
-	_postCreate.push([compName, xid, param]);
-}
-
-function afterLoadController(ctx){
-	var s = _('xpostscript');
-	var fn = s.innerText;
-	s.parentNode.removeChild(s);
-	s = document.createElement('script');
-	s.innerText = fn;
-	document.body.appendChild(s);
-	var fn = __post_xscript__.toString() + ";__post_xscript__();";
-	
-	xobj.evalOnContext(ctx, fn);
-	
-	var mainCtxId = ctx || document.body.getAttribute('_x_ctx');
-	xutil.each(_postCreate, function(item){
-		var comp = item[2];
-		comp._x_comp = X.comp[item[0]];
-		var xid = item[1] || X.generateId();
-		comp._x_ctx = mainCtxId;
-		postCreateComp(comp, xid);
-	});
-	_postCreate = [];
-	configComps(mainCtxId);
-}
-
-function disableExcept(){
-	var xmeta = arguments[arguments.length-1];
-	var elements = xdom.getElementsByAttribute('_x_ctx', xmeta.id);
-	xutil.each(elements, function(item){
-		var id = item.getAttribute("id");
-		var found = false;
-		for(var i = 0; i < arguments.length - 1; i++){
-			if(id == arguments[i]){
-				found = true;
-				break;
-			}
+var _handles = {};
+function registerAll(compMap){
+	for (var k in compMap) {
+		_handles[k] = {};
+		var list = compMap[k];
+		for (var i = 0; i < list.length; i++) {
+			var comp = list[i];
+			var id = comp.xcompId;
+			delete comp.xcompId;
+			_handles[k][id] = comp;			
 		}
-		if(!found){
-			item.setAttribute("disabled", true);
-		}
-	});
+	}
 }
 
+function prepareComponentContext(e, compCtxSuffix, ctx, postScript){
+	if(e.xcompId && X.comp[e.xcompName].context){
+		if(!compCtxSuffix[e.xcompId]){
+			var fn = X.comp[e.xcompName].context.toString();
+			fn = fn.substring(0, fn.length-1) + ";this._xcompEval = function(f){try{return eval(f);}catch(e){throw new Error('Error on component script: ' + fn + '. Cause: ' + e.message);}};var var$ = this._xcompEval; " + postScript + "}";
+			thisX._temp._xtemp_comp_struct = _handles[e.xcompName][e.xcompId];
+			var ctx = ctx.eval('new ' + fn + '(X._temp._xtemp_comp_struct)');
+			delete thisX._temp._xtemp_comp_struct;
+			e._compCtx = ctx;
+			compCtxSuffix[e.xcompId] = ctx;
+		}else{
+			e._compCtx = compCtxSuffix[e.xcompId];
+		}
+	}
+}
+
+//disable input or component by data-xbind
 function disable(varName){
-	var elements = xdom.getElementsByAttribute('xvar', varName, true);
+	var elements = xdom.getElementsByAttribute('data-xbind', varName, true);
 	xutil.each(elements, function(item){
-		item.setAttribute("disabled", true);
+		xdom.setAtt(item, "disabled", true);
 	});
 }
 
-_expose(eachRegisteredObjects);
-_expose(unregisterObjectContext);
+var componentInstances;
+function register(jsonComp){
+	componentInstances = jsonComp;
+}
+function startInstances(){
+	var compCtxSuffix = {};
+	for(var compId in componentInstances){
+		var array = xdom.findNodesByProperty('xcompId', compId, false, false);
+		for (var i = 0; i < array.length; i++) {
+			var e = array[i];
+			prepareComponentContext(e, compCtxSuffix, thisX, "");			
+		}
+	}
+	componentInstances = null;
+}
+
 _expose(initComponents);
-_expose(buildComponents);
+_expose(createComponentConstructors);
 _expose(init);
-_expose(afterLoadController);
-_external(disableExcept);
 _external(disable);
-_external(_registerPostCreateComponent);
+_external(registerAll);
+_expose(prepareComponentContext);
+_expose(register);
+_expose(startInstances);

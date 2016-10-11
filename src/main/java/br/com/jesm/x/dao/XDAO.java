@@ -9,6 +9,7 @@ import java.util.Map;
 
 import org.hibernate.Criteria;
 import org.hibernate.Query;
+import org.hibernate.criterion.CriteriaSpecification;
 import org.hibernate.criterion.DetachedCriteria;
 import org.hibernate.criterion.MatchMode;
 import org.hibernate.criterion.Projections;
@@ -119,8 +120,11 @@ public class XDAO<T extends XEntity> {
 	}
 
 	private long countCriteria(DetachedCriteria criteria) {
-		return (Long) criteria.setProjection(Projections.rowCount())
+		long result = (Long) criteria.setProjection(Projections.rowCount())
 				.getExecutableCriteria(XContext.getPersistenceSession()).uniqueResult();
+		criteria.setProjection(null);
+		criteria.setResultTransformer(CriteriaSpecification.DISTINCT_ROOT_ENTITY);
+		return result;
 	}
 
 	public XSearch<T> search() {
@@ -364,8 +368,8 @@ public class XDAO<T extends XEntity> {
 		return (List<T>) q.list();
 	}
 
-	public long count(String query) {
-		Query q = XContext.getPersistenceSession().createQuery(query);
+	public long count(StringBuilder query) {
+		Query q = XContext.getPersistenceSession().createQuery(query.toString());
 		return (Long) q.uniqueResult();
 	}
 
@@ -506,7 +510,7 @@ public class XDAO<T extends XEntity> {
 			@Override
 			public List<T> execute() {
 				String select = "select " + aliasToSelect + " " + query;
-				return pagination == null ? find(select, pagination, parameters) : find(select, parameters);
+				return pagination != null ? find(select, pagination, parameters) : find(select, parameters);
 			}
 
 			@Override

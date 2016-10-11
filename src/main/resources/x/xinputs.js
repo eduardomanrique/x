@@ -1,71 +1,173 @@
+//set value on input. Called on xobj.loadObj, xobj.updateObject and xobj.grabValueFromPropertyOrInput 
 function setValueOnInput(input, value){
-	xlog.debug("_x_input", "xinputs.setValueOnInput " + (input.getAttribute ? "xvar: " + input.getAttribute("xvar") + ", type: " + input.getAttribute("type") : " no getAttribute ") + ", name: " + input.name + ", valueToSet: " + value + ", id: " + input.id);
-	var isJson = input.getAttribute("xisjson") == "true";
+	if(input === document.activeElement){
+		return;
+	}
+	xlog.debug("_x_input", "xinputs.setValueOnInput " + (input.getAttribute ? "data-xbind: " + input.getAttribute("data-xbind") + ", type: " + input.getAttribute("type") : " no getAttribute ") + ", name: " + input.name + ", valueToSet: " + value + ", id: " + input.id);
 	if(input.getAttribute("type") == "checkbox"){
-		input.checked = value;
+	    //checkbox is a boolean value or a list value (like multiple choice)
+	    var xvalue = input.getAttribute("data-xvalue");
+	    var cbValueAtt = input.getAttribute("value");
+	    if(xvalue || cbValueAtt){
+	        //multiple choice
+	        if(!value){
+	            value = [];
+	        }else if(!(value instanceof Array)){
+	            throw Error('Value of ' + input.getAttribute("data-xbind") + ' should be array when using with checkbox with xvalue');
+	        }
+	        var cbVal;
+            if(cbValueAtt){
+               cbVal = cbValueAtt;
+            }else{
+                cbVal = execInCorrectContext(input, xvalue);
+            }
+            input.checked = value && value.indexOf(cbVal) >= 0;
+	    }else{
+            //it is boolean, set checked or unchecked
+            input.checked = value;
+		}
 	}else if(input.getAttribute("type") == "radio"){
-		var elements = document.getElementsByName(input.getAttribute("name"));
+		//gets all radios and set checked or unchecked
+		var elements = xdom.getElementsByName(input.getAttribute("name"));
 		xlog.debug("_x_input", "setValueOnRadio radio name: " + input.getAttribute("name") + ", len: " + elements.length);
-		xutil.each(elements, function(item){
+		for(var i = 0; i < elements.length; i++){
+			var item = elements[i];
 			xlog.debug("_x_input", "radio name: " + input.getAttribute("name") + ", index: " + i + ", value: " + item.value);
-			item.checked = (item.value == (value + ""));
+			var xvalue = item.getAttribute("data-xvalue");
+			if(xvalue){
+				var itemVal = execInCorrectContext(item, xvalue);
+				item.checked = xutil.equals(itemVal, value);
+			}else{
+				item.checked = (item.value == (value != undefined && value != null ? value + "" : ""));				
+			}
 			xlog.debug("_x_input", "radio name: " + input.getAttribute("name") + ", aftersSet: " + item.checked);
-		});
+		}
 		xlog.debug("_x_input", "setValueOnRadio radio name: " + input.getAttribute("name") + ", END");
-	}else if(isJson){
-		if(input.nodeName.toUpperCase() == "SELECT"){
-			var options = X.getChildNodesByTagName(input, "option", true);
-			for(var i = 0; i < options.length; i++){
-				var __xtempvar__;
-				var tempval = decodeURIComponent(options[i].getAttribute("value"));
-				eval('__xtempvar__=' + tempval);
-				if((!__xtempvar__ && !value) || (value && __xtempvar__ && value.id == __xtempvar__.id)){
-					options[i].setAttribute("selected", "true");
+	}else if(input.nodeName.toUpperCase() == "SELECT"){
+		//gets all options from select
+		if(!input.multiple){
+			input.selectedIndex = -1;
+		}
+		var options = input.options;
+		for(var i = 0; i < options.length; i++){
+			var optVal;
+			var xvalue = options[i].getAttribute("data-xvalue");
+			if(xvalue){
+				optVal = execInCorrectContext(options[i], xvalue);
+			}else if(options[i].getAttribute("value")){
+				optVal = options[i].getAttribute("value");
+			}else{
+				optVal = options[i].innerHTML;
+			}
+			if(input.multiple){
+				for (var j = 0; j < value.length; j++) {
+					var v = value[j];
+					if(xutil.equals(v, optVal)){
+						options[i].selected = true;
+						break;
+					}
+				}
+			}else{
+				if(xutil.equals(value, optVal)){
+					input.selectedIndex = i;
 					break;
 				}
 			}
 		}
-	}else if(input.getAttribute("xtype") == 'autocomplete'){
-		var ctxId = xobj.getElementCtx(input);
-		X.getAutocomplete(input).setInputValue(value);
-	}else if(input.value != value){
-		if(input.getAttribute('xtype') == 'date'){
-			var isDate = value instanceof Date;
-			if(isDate || input.getAttribute("xdatetype") == 'true'){
-				var dtFormat = input.getAttribute("xdateformat") || '%defaultdateformat%';
-				value = xmask.formatDate(value, dtFormat);
-				input.setAttribute("xdatetype", 'true');				
-			}else{
-				input.setAttribute("xdatetype", 'false');
+	}else if(input.getAttribute("data-xtype") == 'autocomplete'){
+		//autocomplete
+		thisX.getAutocomplete(input).setInputValue(value);
+	}else{
+		var compVal = input.value;
+		//is ref object (script var in html). Replaces val for the real val
+		if(compVal != value){
+			if(input.getAttribute('data-xtype') == 'date' || input.getAttribute('data-xtype') == 'datetime' || 
+					input.getAttribute('data-xtype') == 'time'){
+				//xtype is date
+				var isDate = value instanceof Date;
+				if(isDate || input.getAttribute("data-xdatetype") == 'true'){
+					var dtFormat = xmask.getMask(input);
+					value = xmask.formatDate(value, dtFormat);
+					xdom.setAtt(input, "data-xdatetype", 'true');
+				}else{
+					xdom.setAtt(input, "data-xdatetype", 'false');
+				}
+			}else if(input.getAttribute('data-xtype') == 'ifloat'){
+				//xtype is float
+				value = (value + "").replace('.', ',');
 			}
-		}else if(input.getAttribute('xtype') == 'ifloat'){
-			value = (value + "").replace('.', ',');
+			input.value = value;
 		}
-		input.value = value;
 	}
-	xlog.debug("_x_input", "xinputs.setValueOnInput xvar: " + input.getAttribute("xvar") + ", END");
+	xlog.debug("_x_input", "xinputs.setValueOnInput data-xbind: " + input.getAttribute("data-xbind") + ", END");
 }
 
+function _getValFromOption(input, opt){
+	var val;
+	var xvalue = opt.getAttribute("data-xvalue");
+	if(xvalue){
+		val = execInCorrectContext(opt, xvalue);
+	}else if(opt.getAttribute("value")){
+		val = opt.getAttribute("value");
+	}else{
+		val = opt.innerHTML;
+	}
+	return val;
+}
+
+//gets value from input. Called from xobj.buildObj, xobj.updateObject, xobj.grabValueFromPropertyOrInput
 function getValueFromInput(input){
 	var val;
-	var type = input.getAttribute ? input.getAttribute('xtype') : null;
+	var type = input.getAttribute ? input.getAttribute('data-xtype') : null;
 	var checkbox = input.getAttribute ? input.getAttribute('type') == "checkbox" : null;
-	var isJson = input.getAttribute("xisjson") == "true";
-	if(isJson){
-		if(input.nodeName.toUpperCase() == "SELECT"){
-			var options = X.getChildNodesByTagName(input, "option", true);
-			for(var i = 0; i < options.length; i++){
-				if(options[i].getAttribute("selected") == "true"){
-					eval('val=' + decodeURIComponent(options[i].getAttribute("value")));
-					break;
+	if(input.nodeName.toUpperCase() == "SELECT"){
+		if(input.multiple){
+			val = [];
+			var options = input.options;
+			for (var i=0; i<options.length; i++) {
+				var opt = options[i];
+				if (opt.selected) {
+					val.push(_getValFromOption(input, opt));
 				}
 			}
+		}else{
+			var selectedOption = input.options[input.selectedIndex];
+			val = selectedOption ? _getValFromOption(input, selectedOption) : null;
 		}
-	}
-	if(checkbox){
-		val = input.checked;
+	}else if(checkbox){
+	    //checkbox is a boolean value or a list value (like multiple choice)
+        var xvalue = input.getAttribute("data-xvalue");
+        var cbValueAtt = input.getAttribute("value");
+        if(xvalue || cbValueAtt){
+            //multiple choice
+            try{
+                val = thisX.eval(input.getAttribute("data-xbind"));
+            }catch(e){}
+            val = val || [];
+            var cbVal;
+            if(cbValueAtt){
+                cbVal = cbValueAtt;
+            }else{
+                cbVal = execInCorrectContext(input, xvalue);
+            }
+            if(input.checked){
+                //add element to array
+                if(val.indexOf(cbVal) < 0){
+                    val.push(cbVal);
+                }
+            }else{
+                //remove element to array
+                var index = val.indexOf(cbVal);
+                if(index >= 0){
+                    val.splice(index, 1);
+                }
+            }
+        }else{
+            //it is boolean, set checked or unchecked
+            val = input.checked;
+        }
 	}else if (type) {
-		xlog.debug("_x_input", "xinputs.getValueFromInput xvar: " + input.getAttribute("xvar") + ", xtype: " + type + ", isjson: " + isJson);
+		xlog.debug("_x_input", "xinputs.getValueFromInput data-xbind: " + input.getAttribute("data-xbind") + ", xtype: " + type);
 		if (type == 'ifloat'){
 			if(input.value.indexOf(',') < 0 && input.value.indexOf('.') < 0){
 				type = 'int';
@@ -93,182 +195,284 @@ function getValueFromInput(input){
 		} else if (type == 'boolean') {
 			val = input.value.toUpperCase() == 'TRUE';
 		} else if (type == 'autocomplete') {
-			val = X.getAutocomplete(input).getValue();
+			val = thisX.getAutocomplete(input).getValue();
 			if (!val) {
 				val = null;
 			}
 		} else {
-			var inputVal = input.value;
-			if(input.getAttribute && type == 'date' && input.getAttribute('xdatetype') == 'true'){
-				var dtFormat = input.getAttribute("xdateformat") || '%defaultdateformat%';
-				inputVal = xmask.parseDate(inputVal, dtFormat);
-			}
-			if(input.getAttribute && input.getAttribute("xisjson")){
-				if(inputVal){
-					eval("val = " + decodeURIComponent(inputVal));
-				}else{
-					val = null;
-				}
+			if(input.getAttribute && input.getAttribute("data-xvalue")){
+				val = execInCorrectContext(input, input.getAttribute("data-xvalue"));
 			}else{
-				val = inputVal;				
+				val = input.value;
+				if (input.getAttribute('data-xdatetype') == 'true' && (type == 'date' || type == 'datetime' || type == 'time')){
+					var dtFormat = xmask.getMask(input);
+					val = xmask.parseDate(val, dtFormat, type);
+				}
 			}
 		}
 	}else if(input.getValue){
 		val = input.getValue();
 	} else {
-		if(input.getAttribute && input.getAttribute("xisjson")){
-			if(input.value){
-				eval("val = " + decodeURIComponent(input.value));
-			}else{
-				val = null;
-			}
+		if(input.getAttribute && input.getAttribute("data-xvalue")){
+			val = execInCorrectContext(input, input.getAttribute("data-xvalue"));
 		}else{
 			val = input.value;				
 		}
 	}
 	xlog.debug("_x_input", "xinputs.getValueFromInput return: " + val);
+	if(typeof(val) == 'string' && input.getAttribute){
+		var trimoff = input.getAttribute('data-xtrimoff');
+		if(!trimoff || trimoff.toLowerCase() == 'true'){
+			val = thisX.trim(val);
+			if(!val){
+				val = null;
+			}
+		}
+	}
 	return val;
 }
 
-function setContextOnInputs(cid){
-	function getCidFrom(obj){
-		if(!cid){
-			var parent = obj;
-			while((parent = parent.parentNode)){
-				parentCid = parent.getAttribute("_x_ctx");
-				if(parentCid){
-					return parentCid;
-				}
-			}
-		}
-		return cid;
-	}
-	xdom.eachInput(function(input) {
-		if(!input.getAttribute('_x_ctx')){
-			input.setAttribute('_x_ctx', getCidFrom(input));
-		}
-	}, true);
-	xcomponents.eachRegisteredObjects(function(obj){
-		obj.setCtx(cid);
-	});
-	var elements = document.getElementsByTagName("xobject");
-	xutil.each(elements, function(el){
-		if(!el.getAttribute("_x_ctx")){
-			el.setAttribute('_x_ctx', getCidFrom(el));				
-		}
-	});
+function _configEvent(eventName, updateInputs, input) {
+    if(input._skipEventConfig){
+        return;
+    }
+    if(!input.getAttribute('data-x_event_' + eventName)){
+        xdom.setAtt(input, 'data-x_event_' + eventName, "true");
+        input["on" + eventName] = _createFnEvent(input, eventName, updateInputs);
+    }
 }
 
+function _configEventHref(a) {
+    if(a.href && !a.getAttribute('data-x_event_hrefclick')){
+        if(a.href.indexOf("javascript:") == 0){
+            xdom.setAtt(a, 'data-x_event_hrefclick', "true");
+            a["onclick"] = _createFnEvent(a, "href", true);
+        }
+    }
+}
 
-function createFnEvent(input, eventName, updateInputs) {
-	var fn = input.getAttribute("on" + eventName);
-	if(!input._x_events){
-		input._x_events = {};		
+function _createFnEvent(input, eventName, updateInputs) {
+	var fn;
+	if(eventName == "href"){
+		fn = input.href.substring("javascript:".length);
+		input.href = 'javascript:;';
+	}else{
+		fn = input.getAttribute("on" + eventName);
+		xdom.setAtt(input, "on" + eventName, "");
 	}
-	if(!input._x_events[eventName]){
-		input._x_events = [];		
+	if(fn){
+		xdom.setAtt(input, "data-xon" + eventName, fn);
 	}
-	input.setAttribute("on" + eventName, "");
-	input.setAttribute("xon" + eventName, fn || "(function(){})");
 	return function(e) {
 		return _fireEventAUX(eventName, input, e, updateInputs);
 	};
 }
 
-function _fireEvent(eventName, idSelOrInput){
-	var input = typeof(idSelOrInput) == 'string' ? _(idSelOrInput) : idSelOrInput;
-	if(!input){
-		return;
-	}
-	var e = {
-		type: eventName,
-		target: input
-	}
-	_fireEventAUX(eventName, input, e, false);
+function addEventListener(input, eventName, scr){
+	var fn = input.getAttribute("data-xon" + eventName);
+	xdom.setAtt(input, "data-xon" + eventName, fn + ";" + scr);
 }
 
+//the event function
 function _fireEventAUX(eventName, input, e, updateInputs){
-	xlog.debug("_x_event", "Fired Event " + eventName + " of input of xvar " + input.getAttribute("xvar") + ", id: " + input.id);
-	for(var index in input._x_events[eventName]){
-		input._x_events[eventName][index](input, [e]);
-	}
-	xobj.updateObject(input);
-	xlog.debug("_x_event", "After updateObject ev: " + eventName + " xvar: " + input.getAttribute("xvar") + " val: " + input.value);
-	var fn = input.getAttribute("xon" + eventName);
+    xutil.markFocused();
+    xobj.updateObject(input);
+	xlog.debug("_x_event", "Fired Event " + eventName + " of input of data-xbind " + input.getAttribute("data-xbind") + ", id: " + input.id);
+	var fn = input.getAttribute("data-xon" + eventName);
 	if(fn){
-		xlog.debug("_x_event", "Fireing ev: " + eventName);
-		xobj.evalOnContext(xobj.getElementCtx(input), fn);	
-		xlog.debug("_x_event", "After fired ev: " + eventName + " xvar: " + input.getAttribute("xvar") + " val: " + input.value);
+		xlog.debug("_x_event", "Firing ev: " + eventName + ", function: " + fn);
+		//set current event on X
+		xsetCurrentEvent(e);
+		try{
+			var resultFn = execInCorrectContext(input, fn);
+			if(resultFn && typeof(resultFn) == 'function'){
+			    resultFn(e);
+			}
+			if(input._compCtx){
+				X$._update();
+			}
+		}catch(e){
+			xlog.error('Error firing ' + eventName + ' script: ' + fn, e);
+		}
+		xsetCurrentEvent(null);
+		xlog.debug("_x_event", "After fired ev: " + eventName + " data-xbind: " + input.getAttribute("data-xbind") + " val: " + input.value);
 	}
-	if(updateInputs){
-		xobj.updateInputs();
-		xlog.debug("_x_event", "After updateInputs ev: " + eventName + " xvar: " + input.getAttribute("xvar") + " val: " + input.value);
-	}
-	xobj.updateXObjects();
-	xdom.updateElementsAttributeValue(null, eventName == 'blur' ? null : input);
-	xlog.debug("_x_event", "After updateObjectects ev: " + eventName + " xvar: " + input.getAttribute("xvar") + " val: " + input.value);
+	X$._update();
+    updateDisabled = false;
+    xutil.setFocused();
+    for (var i = 0; i < _afterCheck.length; i++) {
+        var c = _afterCheck[i];
+        c();
+    }
+
+	xlog.debug("_x_event", "After updateObjectects ev: " + eventName + " data-xbind: " + input.getAttribute("data-xbind") + " val: " + input.value);
 	var result = xmask.mask(e);
 	if(result != undefined && result == false || result == true){
 		return result;
 	}
 }
 
-function configEvent(eventName, updateInputs) {
-	xdom.eachInput(function(input){
-		if(!input.getAttribute('_x_event_' + eventName)){
-			input.setAttribute('_x_event_' + eventName, "true");
-			input["on" + eventName] = createFnEvent(input, eventName, updateInputs);								
-		}
-	}, true);
+function execInCorrectContext(input, fn){
+    var fnName = 'eval';
+    var ctx;
+    var xiterId = input.xcontentIterId || input.xiterId
+    if(xiterId){
+        ctx = xvisual.getIteratorCtx(input);
+        ctx.set(input.xiterIndex);
+    }
+    if(input._compCtx){
+        ctx = input._compCtx;
+        fnName = '_xcompEval';
+    }
+    if(!ctx){
+        ctx = thisX;
+    }
+    return ctx[fnName](decodeURIComponent(fn));
 }
 
+//the event function can be fired outside through this function
+function _fireEvent(eventName, idSelOrInput, event){
+	var input = typeof(idSelOrInput) == 'string' ? X._(idSelOrInput) : idSelOrInput;
+	if(!input){
+		return;
+	}
+	var e = event || {};
+	e.type = eventName;
+	e.target = input;
+	_fireEventAUX(eventName, input, e, false);
+}
+
+//config all events on new inputs
 function configEvents(){
-	configEvent("keyup", false);
-	configEvent("keydown", false);
-	configEvent("change", true);
-	configEvent("blur", true);
-	configEvent("focus", true);
-	configEvent("click", true);
-	var elArray = xdom.getElementsByAttribute("xtype", 'autocomplete');
-	xutil.each(elArray, function(item){
-		if(!item._xautocomplete){
-			var ac = X.getAutocomplete(item);
-			var ctx = xobj.getElementCtx(item);
-			if(item.autocompletefunction){
-				var fn = evalOnContext(ctx, item.autocompletefunction);
-				ac.setSourceFunction(fn);
-			}
-			if(item.descriptionfunction){
-				var fn = evalOnContext(ctx, item.descriptionfunction);
-				ac.setDescriptionFunction(fn);
-			}
-			if(item.finaldescriptionfunction){
-				var fn = evalOnContext(ctx, item.finaldescriptionfunction);
-				ac.setFinalDescriptionFunction(fn);
-			}
-		}
-	});
+	if(thisX.isImport){
+		return;
+	}
+	if(!window._xpushStateConfigured){
+	    window._xpushStateConfigured = true;
+	    if (X$._isSpa){
+	        window.addEventListener('click', function(e){
+	            //set the pushState
+	            if(e.target.nodeName.toUpperCase() == 'A' && e.target.href && !e.target.getAttribute('data-x_event_hrefclick')){
+	                //dealing with #
+	                var href = e.target.getAttribute("href");
+	                if(href == '#'){
+	                    return;
+	                }
+	                var splitHref = href.split('#');
+	                if(splitHref[0] == ''){
+                        return;
+	                }
+	                if(splitHref.length > 1 &&
+	                    (splitHref[0] == location.protocol + '//' + location.host + location.pathname ||
+	                    splitHref[0] == location.pathname)){
+	                    return;
+	                }
+	                //done with #
+
+                    if(href.indexOf('http:') != 0 && href.indexOf('https:') != 0){
+                        xvisual.onPushStateSpa(href);
+                        return e.preventDefault();
+                    }
+	            }
+	        }, false);
+	        X$._currentUrl = window.location.toString();
+	        window.addEventListener('popstate', function(event) {
+	            X$._lastUrl = X$._currentUrl;
+	            X$._currentUrl = window.location.toString();
+	            xvisual.onPushStateSpa(window.location.pathname + window.location.search, true);
+            });
+        }
+	}
+	var aArray = xobj.getAArray();
+    for(var i = 0; i < aArray.length; i++){
+        var a = aArray[i];
+        _configEventHref(a);
+    }
+    var inputs = xobj.getInputArray();
+	for(var i = 0; i < inputs.length; i++){
+    	var input = inputs[i];
+        configureEvent("keyup", input);
+        configureEvent("keydown", input);
+        configureEvent("change", input);
+        configureEvent("blur", input);
+        configureEvent("focus", input);
+        configureEvent("click", input);
+        configureAutocomplete(input);
+    }
+}
+
+function configureHref(a){
+    if(a.nodeName.toUpperCase() == 'A'){
+        _configEventHref(a);
+    }
+}
+
+function configureAutocomplete(input){
+    if(input.getAttribute("data-xtype") == 'autocomplete' && !input._xautocomplete){
+        var ac = thisX.getAutocomplete(input);
+        if(input.autocompletefunction){
+            var fn = thisX.eval(input.autocompletefunction);
+            ac.setSourceFunction(fn);
+        }
+        if(input.descriptionfunction){
+            var fn = thisX.eval(input.descriptionfunction);
+            ac.setDescriptionFunction(fn);
+        }
+        if(input.finaldescriptionfunction){
+            var fn = thisX.eval(input.finaldescriptionfunction);
+            ac.setFinalDescriptionFunction(fn);
+        }
+    }
+}
+
+function configureEvent(eventName, input){
+    _configEvent(eventName, eventName != "keyup", input);
 }
 
 function validateFields() {
 	var result = true;
-	var array = xdom.getElementsByAttribute('xmandatory', 'true');
+	var array = xdom.getElementsByAttribute('data-xmandatory', 'true');
 	for(var i in array){
 		var item = array[i];
-		if (item.value == '') {
-			xvisual.highlight(item);
-			result = false;
-		} else {
-			xvisual.removeHighlight(item);
+		var validation = validateField(item);
+		if(result){
+			result = validation;
 		}
 	};
 	return result;
 }
 
-_external(validateFields);
+function validateField(itemOrName){
+	var result = true;
+	var item = itemOrName;
+	if(typeof(itemOrName) == "string"){
+		var array = xdom.getElementsByAttribute('data-xbind', itemOrName, false, true);
+		if(array && array.length > 0){
+			item = array[0];
+		}else{
+			return;
+		}
+	}
+	if(!xdom._checkElementInContext(item)){
+		return true;
+	}
+	if (item.value == '') {
+		xvisual.highlight(item);
+		result = false;
+	} else {
+		xvisual.removeHighlight(item);
+	}
+	return result;
+}
 
+_external(validateFields);
+_external(validateField);
+_external(configureAutocomplete);
+_external(configureHref);
 _expose(setValueOnInput);
 _expose(getValueFromInput);
-_expose(setContextOnInputs);
 _expose(configEvents);
 _external(_fireEvent)
+_external(addEventListener);
+_external(configureEvent);
+_expose(execInCorrectContext);

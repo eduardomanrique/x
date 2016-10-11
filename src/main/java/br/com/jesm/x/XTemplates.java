@@ -10,15 +10,30 @@ import javax.servlet.ServletContext;
 
 public class XTemplates {
 
+	private static final String XDEFAULT_TEMPLATE_PROPERTY = "_xdefaultTemplate";
+	private static final String XDEFAULT_TEMPLATE_PROPERTY_REF = "_xdefaultTemplateRef";
+
 	protected static Map<String, String> webTemplateIndex = new HashMap<String, String>();
 
 	protected static Map<String, String> webTemplate = new HashMap<String, String>();
 
-	protected static String applyTemplate(String html, String templateName, ServletContext ctx, boolean isIndex)
-			throws IOException {
-		if (templateName == null) {
-			templateName = "XDEFAULT_TEMPLATE_NAME";
+	protected static String getTemplate(String templateName, boolean isIndex) throws IOException {
+		String xbody = "{xbody}";
+		String resultHTML = "";
+		if (templateName != null) {
+			String template = (isIndex ? webTemplateIndex : webTemplate).get(templateName);
+			int index = template.indexOf(xbody);
+			if(index < 0){
+				throw new RuntimeException("Invalid template " + templateName + ". No {xbody} found");
+			}
+			resultHTML = template.substring(0, index) + "<xbody/>" + template.substring(index + xbody.length());
 		}
+		return resultHTML;
+	}
+
+	public static String getTemplateName(String html, String defaultTemplateName, ServletContext ctx,
+			boolean isIndexPage) throws IOException {
+		String templateName = defaultTemplateName;
 		int indexTemplateInfo = html.indexOf("<template-info ");
 		if (indexTemplateInfo >= 0) {
 			String info = html.substring(indexTemplateInfo, html.indexOf(">", indexTemplateInfo));
@@ -32,50 +47,43 @@ public class XTemplates {
 				throw new RuntimeException("Invalid template tag");
 			}
 			templateName = template;
-
 		}
-		if ((!webTemplate.containsKey(templateName) && !isIndex)
-				|| (!webTemplateIndex.containsKey(templateName) && isIndex)) {
-			InputStream is;
-			if (templateName == null) {
-				is = XTemplates.class.getResourceAsStream("/default_template.html");
-			} else {
-				is = ctx.getResourceAsStream("/templates/" + templateName);
+		if (templateName != null && ((!webTemplate.containsKey(templateName) && !isIndexPage)
+				|| (!webTemplateIndex.containsKey(templateName) && isIndexPage))) {
+			InputStream is = ctx.getResourceAsStream("/templates/" + templateName);
+			if (is == null) {
+				throw new IOException("Invalid template name " + templateName);
 			}
-			String webctx = ctx.getContextPath();
-			String scripts = "<script type=\"text/javascript\" src=\"" + webctx + "/x/scripts/xparams.js\"></script>"
-					+ "<script>window['_x_page_timestamp_'] = " + XServlet.applicationTimestamp + ";</script>"
-					+ "<script type=\"text/javascript\" src=\"" + webctx + "/x/scripts/x.js\"></script></body>";
 			String template = XStreamUtil.inputStreamToString(is);
-			template = template.replaceFirst("</body[\\s]*>", scripts);
-			if (isIndex) {
+			if (isIndexPage) {
 				webTemplateIndex.put(templateName, template);
 			} else {
 				webTemplate.put(templateName, template);
 			}
 
 		}
-		String xbody = "{xbody}";
-		String template = (isIndex ? webTemplateIndex : webTemplate).get(templateName);
-		int index = template.indexOf(xbody);
-		return template.substring(0, index) + html + template.substring(index + xbody.length());
+		return templateName;
 	}
 
 	protected static String applyScriptForPopup(String html) throws IOException {
-		return html + "<script type=\"text/javascript\">" + "var scr = document.createElement('script');"
+		return html + "<script type=\"text/javascript\">var scr = document.createElement('script');"
 				+ "scr.src = window.location.pathname + '.js';"
 				+ "scr.onload = function(){if(window.onInit){onInit();}};" + "document.body.appendChild(scr);"
 				+ "</script></body>";
 
 	}
 
-	protected static String modalTemplate(String templateName, ServletContext ctx) throws IOException {
-		InputStream is;
-		if (templateName == null) {
-			is = XTemplates.class.getResourceAsStream("/modal_template.html");
-		} else {
-			is = ctx.getResourceAsStream("/templates/" + templateName);
-		}
+	protected static String popupModalTemplate(String templateName, ServletContext ctx) throws IOException {
+		InputStream is = ctx.getResourceAsStream("/templates/" + templateName);
+		return preparePopupModalTemplate(is);
+	}
+
+	protected static String getFrameworkPopupModalTemplate(ServletContext ctx) throws IOException {
+		InputStream is = XTemplates.class.getResourceAsStream("/modal_template.html");
+		return preparePopupModalTemplate(is);
+	}
+
+	private static String preparePopupModalTemplate(InputStream is) throws IOException {
 		return XStreamUtil.inputStreamToString(is).replaceAll("\n", "").replaceAll("'", "\\\\'");
 	}
 
@@ -103,5 +111,36 @@ public class XTemplates {
 
 	public static String replaceVars(String strResponse, ServletContext ctx) {
 		return strResponse.replaceAll("\\{webctx\\}", ctx.getContextPath());
+	}
+
+	protected static String preparePopupModalTemplates(String popupModalTemplates, ServletContext ctx)
+			throws IOException {
+		StringBuilder result = new StringBuilder();
+
+		boolean usesFrameworkTemplate = false;
+		String[] modalTemplatesArray;
+		if (popupModalTemplates == null || popupModalTemplates.trim().equals("")) {
+			modalTemplatesArray = new String[] { XDEFAULT_TEMPLATE_PROPERTY };
+			usesFrameworkTemplate = true;
+		} else {
+			modalTemplatesArray = popupModalTemplates.split(",");
+		}
+		for (String tpl : modalTemplatesArray) {
+			if (!tpl.trim().equals("")) {
+				String propertyName = tpl;
+				String templateBody;
+				if (propertyName.equals(XDEFAULT_TEMPLATE_PROPERTY)) {
+					templateBody = XTemplates.getFrameworkPopupModalTemplate(ctx);
+				} else {
+					templateBody = XTemplates.popupModalTemplate(tpl, ctx);
+				}
+				result.append("'").append(propertyName).append("':'").append(templateBody).append("',");
+			}
+		}
+		if (!usesFrameworkTemplate) {
+			String propertyName = modalTemplatesArray[0];
+			result.append("'").append(XDEFAULT_TEMPLATE_PROPERTY_REF).append("':'").append(propertyName).append("',");
+		}
+		return result.toString();
 	}
 }

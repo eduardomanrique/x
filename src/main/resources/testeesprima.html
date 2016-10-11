@@ -25,7 +25,7 @@
 		var parsed = esprima.parse(document.getElementById("tx").value);
 		document.getElementById("tx").value = JSON.stringify(parsed);
 		var newScript = iterate(parsed);
-		document.getElementById('log').innerHTML(newScript);
+		document.getElementById('log').innerHTML = newScript;
 	}
 </script>
 </head>

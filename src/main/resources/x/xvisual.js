@@ -1,136 +1,298 @@
-function createEventHandler(idModal, fn) {
-	return function() {
-		if (fn) {
-			fn(idModal);
-		}
-		closeMsg(idModal);
-	};
-}
-
 var popups = {};
+var templateInfoMap = %templateInfoMap%;
 
+function _getTplInfo(path){
+    var info = templateInfoMap[path];
+    if(!info){
+        if(window.xuser){//checking /index
+            info = templateInfoMap[path + '/index'];
+        }
+        if(!info){
+            info = templateInfoMap[path + '/_index'];
+        }
+    }
+    return info;
+}
+
+//create a popup modal
 function popup(obj){
-	showLoading();
+	var _tempDiv = xdom.createElement("div");
 	obj.actions = null;
-	xremote.getHtmlPage(obj.url, function(html){
-		obj.msg = html;
-		var _tempDiv = document.createElement("div");
-		_tempDiv.innerHTML = html;
-		var modalInfo = xdom.getChildComponentsByName(_tempDiv, 'modal-info', true)[0];
-		obj.size = {
-			width : modalInfo.width,
-			height : modalInfo.height
-		};
-		obj.title = modalInfo.title;
-		obj._popup = true;
-		var idModal = msg(obj);
-		var elModal = _(idModal);
-		modalInfo._gen_id = idModal;
-		popups[modalInfo.id] = modalInfo;
-		xcomponents.buildComponents();
-		xremote.importScript(obj.url + ".js", function(_c){
-			popups[modalInfo.id]._ctx = _c._x_getControllerId();
-			_tempDiv.setAttribute("_x_ctx", _c._x_getControllerId());
-			xobj.updateAllObjects();
-			xobj.updateXObjects();
-			if(obj.showLoading){
-				X.showLoading();
-			}
-			var fnName = '__xtemp__fn__' + xutil.generateId();
-			var beforeShowModal = X.beforeShowModal;
-			try {
-				X.debug("xstartup", "XObj calling before show modal");
-				xobj.evalOnContext(_c, 'if(X.beforeShowModal){X.beforeShowModal("' + obj.url.substring("%ctx%".length) + '");}');
-			} catch (e) {
-				xlog.error("xstartup", "XObj error calling init");
-				throw e;
-			}
-			_("_xbodydiv_" + obj.url).style.display = "block";
-			_("_xpreloader_").remove();
-			obj._element.style.display = 'block';
-			if(_c.onInit){
-				X[fnName] = function(){
-					_c.onInit(function(){
-						xobj.updateInputs();
-						if(obj.callback){
-							obj.callback.apply(null, arguments);	
-						}
-					}, obj.parameter);
-				}
-			}else{
-				X[fnName] = function(){}
-			}
-			xcomponents.afterLoadController(_c._x_getControllerId());
-			xobj.evalOnContext(_c, 'var fnName = "' + fnName + '";' + 
-					'if(__xvars__){' + 
-					'	var __chord = X.createChord(__xvars__.length, function(){' + 
-					'		X[fnName]()' + 
-					'	});' + 
-					'	__xvars__.__exec(__chord);' + 
-					'}else{' + 
-					'	try{' + 
-					'		X[fnName]();' + 
-					'	}catch(e){}' + 
-					'}');
-		});
-		setTimeout(function(){closeLoading(true, function(){setBlurryBackground(true);});}, 100);
-	});
+	obj.el = _tempDiv;
+	modal(obj, "popup", function(){
+		obj._c._id_modal = xutil.generateId();
+		msg(obj);
+		X$._update();
+		thisX.closeLoading();
+	}, false);
+}
+var modalCallbacks = {};
+//create a modal component
+//obj: parameters for modal
+//element: element where the modal will be placed
+//isPopup: if is popup
+//callback: callback function when ready
+function modal(obj, type, callback, isSpa){
+    var isPopup = type == "popup";
+	if(isPopup){
+		thisX.showLoading();
+	}
+	var jsName = obj.url + ".js?m=t";
+	if(!window['_x_modal_parameters']){
+		window['_x_modal_parameters'] = {};
+	}
+	if(!window['_x_modal_parameters'][obj.url]){
+		window['_x_modal_parameters'][obj.url] = [];
+	}
+	window['_x_modal_parameters'][obj.url].push({callback: obj.callback, parameter: obj.parameter});
+	xremote.importScript(jsName, obj.el, _createModalCallback(obj, callback), null, isSpa);
 }
 
-function closePopup(id){
-	var ctxId = popups[id]._ctx;
-	delete _registeredUpdatables[ctxId];
-	xcomponents.unregisterObjectContext(ctxId);
-	closeMsg(popups[id]._gen_id);
+//called by 
+function _createModalCallback(obj, callback){
+	return function(_c){
+		obj._c = _c;
+		obj._started = false;
+		if(obj.toggle){
+			toggleModal(obj, callback);				
+		}else{
+			if(callback){
+				callback();					
+			}
+		}
+	}
 }
 
+//to be written on server based on annotations
+function modalS(url, toggle, parentElementId, callback){
+    var execModal = function(){
+        var modalEl = xdom.createElement('xmodal');
+        modalEl.style.display = 'none';
+        X._(parentElementId).appendChild(modalEl);
+        var obj = {url:url, toggle: toggle, el: modalEl};
+        modal(obj, "modal", function(){
+            obj._c.toggle = function(){
+                toggleModal(obj);
+            };
+            if(callback){
+                callback(obj._c);
+            }
+        }, false);
+    }
+    if(X$._changingState){
+        X$.onNewPage(execModal);
+    }else{
+        execModal();
+    }
+
+}
+
+//to be used by spa feature
+function setSpaModalNode(insertPoint){
+    X$.spaNode = xdom.createElement('xspamodal');
+    xdom.setAtt(X$.spaNode, 'data-xroot-ctx', '_x_mainSpa');
+    insertPoint.xsetModal(X$.spaNode);
+    _spaModal(window.location.pathname + window.location.search, true);
+}
+
+function _parseUrl(url){
+    var qmIndex = url.indexOf('?');
+    var path = qmIndex >= 0 ? url.substring(0, qmIndex) : url;
+    return {
+        path: path,
+        query: qmIndex >= 0 ? url.substring(qmIndex) : '',
+        tpl: _getTplInfo(path.substring('%ctx%'.length))
+    }
+}
+
+var lastUrl = window.location.pathname + window.location.search;
+//refreshs the spa modal node
+function _spaModal(gotoUrl, skipUpdateState){
+    X$._clearInstances();
+	var current = _parseUrl(lastUrl);
+	var goto = _parseUrl(gotoUrl);
+	if(!goto.tpl || !current.tpl || !goto.tpl.templateName || !current.tpl.templateName || goto.tpl.templateName != current.tpl.templateName){
+	    //incompatible window (not the same tamplate, or no template at all)
+        window.location = goto.path + goto.query;
+	}else{
+	    var tempNode = document.createElement('div');
+	    if(!skipUpdateState){
+	        history.pushState(null, null, goto.path + goto.query);
+	        X$._lastUrl = X$._currentUrl;
+            X$._currentUrl = window.location.toString();
+	    }
+	    var obj = {url: goto.path, toggle: true, el: tempNode, isSpa: true};
+
+    	modal(obj, "spa", function(){
+            while (X$.spaNode.firstChild) {
+                X$.spaNode.removeChild(X$.spaNode.firstChild);
+            }
+            while (tempNode.childNodes.length > 0) {
+                X$.spaNode.appendChild(tempNode.childNodes[0]);
+            }
+            X$._changingState = false;
+            X$._newPage();
+    	}, true);
+	}
+}
+
+function onPushStateSpa(newUrl, skipUpdateState){
+    if(X$.spaNode){
+        _spaModal(newUrl, skipUpdateState);
+    }else{
+        window.location = newUrl;
+    }
+}
+
+//set visible or not the modal (not popup)
+function toggleModal(obj, callback){
+	xobj.updateAllObjects();
+	xobj.updateXScripts();
+	if(obj.showLoading){
+		thisX.showLoading();
+	}
+	var beforeShowModal = thisX.beforeShowModal;
+	try {
+		thisX.debug("xstartup", "XObj calling before show modal");
+		thisX.eval('if(X.beforeShowModal){X.beforeShowModal("' + obj.url.substring("%ctx%".length) + '");}');
+	} catch (e) {
+		xlog.error("xstartup", "XObj error calling init");
+		throw e;
+	}
+	if(!obj.isSpa){
+	    for (var i = 0; i < obj.el.parentNode.children.length; i++) {
+            var child = obj.el.parentNode.children[i];
+            child.style.display = child === obj.el ? "block" : "none";
+        }
+	}
+	obj._c._x_eval("X._loadObjects()");
+	if(callback){
+		callback();
+	}
+}
+//id gen for modal
+function _generateIdModal(){
+	return "modal_" + xutil.generateId();
+}
+
+function setModalPosition(elmod){
+	var _docHeight = (document.height !== undefined) ? document.height : document.body.offsetHeight;
+	if(elmod.offsetHeight > (_docHeight * 0.9)){
+		elmod.style.top = '0%';
+		elmod.style.position = 'relative';
+		elmod.style.transform = 'translate(-50%, 0%)';
+	}else{
+		elmod.style.position = 'fixed';
+		elmod.style.top = '50%';
+		elmod.style.transform = 'translate(-50%, -50%)';
+	}
+}
+
+var popupTemplates = {%popupmodaltemplates%};
+
+//alert message
 function msg(obj) {
+	var mprop = X$._modalProperties[obj.url] || {};
 	if (!obj.size) {
 		obj.size = {
-				width : 400,
-				height : 200
+			width : mprop.width || 400
 		};
 	}
-	var idModal = "modal_" + xutil.generateId();
-	var left = parseInt((window.innerWidth - obj.size.width) / 2);
-	var top = parseInt((window.innerHeight - obj.size.height) / 2);
-	var html = '%modaltemplate%'.replace('{obj.title}', obj.title)
-		.replace('{obj.size.width}', obj.size.width)
-		.replace('{obj.size.height}', obj.size.height)
-		.replace('{obj.msg}', obj.msg)
-		.replace('{obj.left}', left)
-		.replace('{obj.top}', top)
-		.replace('{idModal}', idModal);
-	var elmod = buildHtmlNodeFromString(html);	
-	elmod.setAttribute("id", idModal);
+	var popupTemplate = popupTemplates[mprop.template || obj.template] || popupTemplates._xdefaultTemplate;
+	if(!popupTemplate){
+		popupTemplate = popupTemplates[popupTemplates._xdefaultTemplateRef];
+	}
+	var html = popupTemplate.replace('{obj.title}', mprop.title || obj.title)
+		.replace('{obj.msg}', obj.msg || '<xmodalinsertpoint/>');
+	var elmod = buildHtmlNodeFromString(html);
 	elmod.innerHTML = html;
-	setBlurryBackground(true);
-	if(obj._popup){
-		elmod.style.display = 'none';
-		obj._element = elmod;
+	var idModal;
+	var isAlert = obj.msg;
+	if(!isAlert){
+		var array = xdom._findNodes(elmod, true, false, function(node){
+			if(node.nodeName.toLowerCase() == 'xmodalinsertpoint'){
+				return true;
+			}
+		});
+		array[0].appendChild(obj.el);
+		idModal = obj._c._id_modal
+	}else{
+		idModal = "md_" + xutil.generateId();
 	}
-	document.body.appendChild(elmod);
-	var b_ids = {};
-	for( var i in obj.actions) {
-		var action = obj.actions[i];
-		var id = '_a_btn_' + xutil.generateId();
-		b_ids[id] = action.fn;
-		var btn = document.createElement("button");
-		btn.id = id;
-		btn.innerHTML = action.label;
-		X.onAddModalButton(idModal, btn, action);
-	}
+	var bgDiv = xdom.createElement('div');
+	xdom.setAtt(bgDiv, "id", idModal);
+	var modalFooter;
+	xdom._findNodes(elmod, false, false, function(node){
+		if(node.classList){
+			if(node.classList.contains("closeModal")){
+				node._idModal = idModal;
+				node._skipEventConfig = true;
+				node.onclick = function(){
+					closeMsg(this._idModal);
+				}				
+			}else if(node.classList.contains("modal-footer")){
+				if(!isAlert){
+					node.style.display = 'none';
+				}else{
+					modalFooter = node;					
+				}
+			}
+		}
+	});
+	elmod.style.maxWidth = obj.size.width + 'px';
+	elmod.style.left = '50%';
+	elmod.style.opacity = 0;
+	var hzi = xutil.highestZIndex();
+	X$._setBlurryBackground(true, idModal);
+	elmod.style.zIndex = hzi + 2;
+	xdom.setAtt(bgDiv, "style", "position: fixed;overflow-y: auto;top: 0;left: 0;bottom: 0;right: 0;outline: 0;z-index: " + (hzi + 1));
 	
-	for( var k in b_ids) {
-		_(k).setAttribute('_x_event_click', "true");
-		_(k).onclick = createEventHandler(idModal,
-				b_ids[k]);
+	bgDiv.appendChild(elmod);
+	document.body.appendChild(bgDiv);
+	setModalPosition(elmod);
+	thisX.addAfterCheck(function(){
+		setModalPosition(elmod);
+	});
+	elmod.style.opacity = 1;
+	if(isAlert){
+		for(var i in obj.actions) {
+			var action = obj.actions[i];
+			var id = '_a_btn_' + xutil.generateId();
+			var btn = xdom.createElement("button");
+			btn.action = action;
+			btn.innerHTML = action.label;
+			if(action.classes){
+				xdom.setAtt(btn, "class", action.classes);
+			}else if(action.style){
+				xdom.setAtt(btn, "style", action.style);
+			}
+			btn._skipEventConfig = true;
+			btn._id_modal = idModal;
+			btn.onclick = function(){
+				if(this.action.fn){
+					this.action.fn();
+				}
+				closeMsg(this._id_modal);
+			}
+			modalFooter.appendChild(btn);
+		}
 	}
-	return idModal;
+}
+
+function showLoading(){
+    X$._showLoading();
+}
+
+function closeLoading(noupdate, cb){
+    X$._closeLoading(function(){
+        if(!noupdate){
+            xobj.updateInputs();
+        }
+    }, cb);
 }
 
 function buildHtmlNodeFromString(html){
-	var dv = document.createElement("div");
+	var dv = xdom.createElement("div");
 	dv.innerHTML = html;
 	for(var i = 0; i < dv.childNodes.length; i++){
 		if(dv.childNodes[i].nodeType == 1){
@@ -139,353 +301,19 @@ function buildHtmlNodeFromString(html){
 	}
 }
 
-var blurryBackground = false;
-var blurryBckTimeout;
-function setBlurryBackground(on){
-	blurryBackground = on;
-	if(blurryBckTimeout){
-		clearTimeout(blurryBckTimeout);
-	}
-	blurryBckTimeout = setTimeout(function(){
-		_('_xbodydiv_').setAttribute("style", on ? "-webkit-filter: blur(1px); -moz-filter: blur(1px);-o-filter: blur(1px);-ms-filter: blur(1px);filter: blur(1px);" : "");
-	}, 100);
-}
-
+//close alert
 function closeMsg(idModal) {
-	var dv = _(idModal);
+	var dv = document.getElementById(idModal);
 	dv.parentNode.removeChild(dv);
-	setBlurryBackground(false);
+	X$._setBlurryBackground(false, idModal);
 	xobj.updateInputs();
-}
-
-var isShowingLoading = false;
-function showLoading() {
-	if(!isShowingLoading){
-		isShowingLoading = true;
-		setBlurryBackground(true);
-		var dv = document.createElement("div");
-		dv.setAttribute("style","background:{{backgroundLoader}};width: 100%;margin: 0;position: fixed;height: 100%;left: 0;top: 0;border: 0;" +
-				"-webkit-border-radius: 0;-moz-border-radius: 0;-o-border-radius: 0;border-radius: 0;z-index: 3333;");
-		var idModal = "_loading_modal_";
-		dv.setAttribute("id", idModal);
-		var size = 40;
-		var left = parseInt((window.innerWidth - size) / 2);
-		var top = parseInt((window.innerHeight - size) / 2);
-		var style = "style='position: relative;width: " + size + "px; height: " + size
-				+ "px; left: " + left + "px; top: " + top + "px;'";
-
-		var html = '<img ' + style
-				+ ' src="%ctx%/x/loader.gif"/>';
-
-		dv.innerHTML = html;
-		document.body.appendChild(dv);
-	}
-}
-
-function closeLoading(noupdate, cb) {
-	if(isShowingLoading){
-		setTimeout(function(){
-			if(!noupdate){
-				xobj.updateInputs();
-			}
-			var dv = _("_loading_modal_");
-			dv.parentNode.removeChild(dv);
-			setBlurryBackground(false);
-			isShowingLoading = false;
-			cb();
-		}, 200);
-	}
-}
-var selectWithList = {};
-var selectWithModel = {}
-var tablesWithModel = {};
-var tablesWithList = {};
-function createUpdatable(id, item, fn, list){
-	var result = {
-		update: function(){
-			if(!_(id)){
-				var ind = list.indexOf(result);
-				if(ind >= 0){
-					list.splice(ind, 1);
-				}
-			}else{
-				fn(id, item);	
-			}
-		}
-	};
-	list.push(result);
-}
-var _registeredUpdatables = {};
-function registerUpdatable(ctx, comp){
-	var ctxId = ctx.ctxId || ctx;
-	if(!_registeredUpdatables[ctxId]){
-		_registeredUpdatables[ctxId] = [];
-	}
-	_registeredUpdatables[ctxId].push(comp);
-}
-function getUpdatables(){
-	var list = [];
-	for(var k in selectWithList){
-		if(selectWithList[k]){
-			createUpdatable(k, selectWithList[k], _fillSelect, list);
-		}
-	}
-	for(var k in selectWithModel){
-		if(selectWithModel[k]){
-			createUpdatable(k, selectWithModel[k], _fillSelectWithModel, list);			
-		}
-	}
-	for(var k in tablesWithModel){
-		if(tablesWithModel[k]){
-			createUpdatable(k, tablesWithModel[k], _fillTableWithModel, list);
-		}
-	}
-	for(var k in tablesWithList){
-		if(tablesWithList[k]){
-			createUpdatable(k, tablesWithList[k], _fillTable, list);			
-		}
-	}
-	for(var ctx in _registeredUpdatables){
-		list = list.concat(_registeredUpdatables[ctx]);
-	}
-	return list;
-}
-function clearTable(id){
-	tablesWithModel[id] = null;
-	tablesWithList[id] = null;
-	var t = _(id);
-	var node = xdom.getChildNodesByTagName(t, 'tbody', true);
-	if(node){
-		node[0].innerHTML = '';
-	}
-}
-
-function addToTable(id, obj, clear) {
-	if(!(obj instanceof Array)){
-		obj = [obj]
-	}
-	fillTable(id, obj, true);
-}
-
-function _fillTableWithModel(id, model) {
-	clearTable(id);
-	tablesWithModel[id] = model;
-	var t = _(id);
-	var bd = xdom.getChildNodesByTagName(t, 'tbody', true);
-	xutil.range(0, model.getSize(), function(i) {
-		var tr = document.createElement("tr");
-		tr.setAttribute("class", i % 2 == 0 ? "" : "xodd");
-		tr._id_row = i;
-		if(model.onRowClick){
-			tr.onclick = function(){
-				model.onRowClick(this._id_row, this);
-			};
-		}
-		xutil.range(0, model.getColsQuantity(), function(j) {
-			var td = document.createElement("td");
-			var value;
-			try{
-				value = model.getHtml(i, j);
-			}catch(e){
-				xlog.error("Error in table model:" + e.message);
-				value = "";
-			}
-			td.innerHTML = value || '';
-			td._id_row = tr._id_row;
-			var colStyle = model.getColStyle(i, j);
-			if(colStyle){
-				td.setAttribute("style", colStyle);
-			}
-			td._id_col = j;
-			if(model.onColClick){
-				td.onclick = function(){
-					model.onColClick(this._id_row, this._id_col, this);
-				};
-			}
-			tr.appendChild(td);
-		});
-		bd[0].appendChild(tr);
-	});
-	updateInputs();
-}
-
-function updateInputs(){
-	xinputs.setContextOnInputs();
-	xinputs.configEvents();	
-}
-
-function fillTable(id, modelOrList, keep){
-	if(modelOrList instanceof Array){
-		_fillTable(id, modelOrList, keep);
-	}else{
-		_fillTableWithModel(id, modelOrList);
-	}
-}
-
-function _fillTable(id, lista, keep) {
-	if(!keep){
-		clearTable(id);
-	}
-	tablesWithList[id] = lista;
-	var t = _(id);
-	var th = xdom.getChildNodesByTagName(t, 'thead')
-	var trList = xdom.getChildNodesByTagName(th[0], 'tr')
-	var cols = [];
-	xutil.each(trList[0].childNodes, function(node){
-		var nm = node.nodeName;
-		if (nm && nm.toUpperCase() == "TH") {
-			var v = node.getAttribute("xvar");
-			var item = {}
-			if(v){
-				item.prop = v;	
-			}
-			var h = node.getAttribute("html");
-			if(h){
-				item.html = h;
-			}
-			cols.push(item);
-		}
-	});
-	var bd = xdom.getChildNodesByTagName(t, 'tbody', true);
-	xutil.each(lista, function(item, i) {
-		var tr = document.createElement("tr");
-		tr.setAttribute("class", i % 2 == 0 ? "" : "xodd");
-		var _temp_obj_ = item;
-		xutil.each(cols, function(col) {
-			var td = document.createElement("td");
-			var html = '';
-			var val = '';
-			if(col.prop){
-				var prop = "_temp_obj_." + col.prop;
-				try{
-					val = eval(prop);	
-				}catch(e){
-					val = '';
-				}
-			}
-			if (col.html) {
-				html += col.html + ' ';
-			}
-			td.innerHTML = html + (val || "");
-			tr.appendChild(td);
-		});
-		bd[0].appendChild(tr);
-	});
-	updateInputs();
-}
-
-function fillSelect(id, listOrModel){
-	if(listOrModel instanceof Array){
-		_fillSelect(id, listOrModel);
-	}else{
-		_fillSelectWithModel(id, listOrModel);
-	}
-}
-
-function _fillSelectWithModel(id, model){
-	//TODO se id for null ou comp null gerar erro
-	var comp = _(id);
-	var selected = comp.selectedIndex;
-	if(selected == null || selected < 0){
-		for(var i = 0; i < comp.options.length; i++){
-			if(comp.options[i].getAttribute("selected")){
-				selected = i;
-			}
-		}
-	}
-	if(model.isJson()){
-		comp.setAttribute("xisjson","true");
-	}
-	comp.innerHTML = '';
-	selectWithModel[id] = model;
-	var _s = createNullOption(comp, model.isJson());
-	if(selectAllowNull(comp)){
-		selected--;
-	}
-	xutil.range(0, model.getSize(), function(i){
-		_s += '<option value="';
-		_s += model.getValue(i);
-		_s += '"';
-		if(selected == i){
-			_s += " selected=\"true\" ";
-		}
-		_s += ">";
-		_s += model.getDescription(i);
-		_s += '</option>';
-	});
-	comp.innerHTML = _s;
-}
-
-function selectAllowNull(comp){
-	return (comp.getAttribute("allownull") || '').toLowerCase() == 'true';
-}
-
-function createNullOption(comp, isJs){
-	var _s = "";
-	if(selectAllowNull(comp)){
-		_s += "<option value='";
-		if(isJs){
-			_s += 'null';
-		}
-		_s += "'>" + (comp.getAttribute("nulldescription") || "") + "</option>";
-	}
-	return _s;
-}
-
-function _fillSelect(id, list){
-	selectWithList[id] = list;
-	var comp = _(id);
-	var selected = comp.selectedIndex;
-	comp.innerHTML = '';
-	var _s = "";
-	var isJs = false;
-	if(!comp.getAttribute("valueproperty") && list && list.length > 0 && typeof(list[0]) == 'object'){
-		isJs = true;
-		comp.setAttribute("xisjson","true");
-	}
-	_s += createNullOption(comp, isJs);
-	if(selectAllowNull(comp)){
-		selected--;
-	}
-	xutil.each(list, function(item, index){
-		_s += "<option value='";
-		var equal = false;
-		if(comp.getAttribute("valueproperty")){
-			_s += item[comp.getAttribute("valueproperty")];
-		}else if(isJs){
-			_s += encodeURIComponent(X.stringify(item));
-		}else{
-			_s += item;
-		}
-		_s += "' ";
-		if(selected == index){
-			_s += " selected=\"true\" ";
-		}
-		_s += ">";
-		if(comp.getAttribute("descriptionproperty")){
-			_s += item[comp.getAttribute("descriptionproperty")];
-		}else if(comp.getAttribute("descriptionscript")){
-			window['_temp_combo_item_'] = item;
-			var varName = comp.getAttribute("xvarname");
-			_s += eval('function _temp_combo_fn_(){ var ' + varName + ' = _temp_combo_item_; return ' + comp.getAttribute("descriptionscript") + '};_temp_combo_fn_();');
-		}else{
-			_s += item;
-		}
-		_s += '</option>';
-	});
-	comp.innerHTML = _s;
-}
-
-function onAddModalButton(idModal, button, properties) {
-	var modal = _(idModal);
-	xdom.getElementsByAttribute('button_place', null)[0].appendChild(button);
 }
 
 function _iterHighlightFields(fields, each){
 	fields = fields instanceof Array ? fields : [fields]
 	xutil.each(fields, function(field){
 		if(typeof(field) == 'string'){
-			xutil.each(xdom.getElementsByAttribute('xvar', field), function(item){
+			xutil.each(xdom.getElementsByAttribute('data-xbind', field), function(item){
 				each.call(null, item);
 			});
 		}else{
@@ -494,547 +322,503 @@ function _iterHighlightFields(fields, each){
 	});
 }
 
+//Highlight fields
 function highlight(fields) {
 	_iterHighlightFields(fields, onHighlight);
 }
 
+//highlight a field. May be overwritten
 function onHighlight(obj) {
 	obj.style.border = "1px solid red";
 }
 
+//remove highlight 
 function removeHighlight(fields) {
 	_iterHighlightFields(fields, onRemoveHighlight);
 }
 
+//remove highlight a field. May be overwritten
 function onRemoveHighlight(obj) {
 	obj.style.border = "1px solid #e3e3e3";
 }
 
-var autocompleteInstances = {};
-function getAutocomplete(param){
-	if(typeof(param) == 'string'){
-		return autocompleteInstances[param];
-	}else{
-		if(!param._xautocomplete){
-			autocomplete(param, param.getAttribute("xautocompleteclass"), param.getAttribute("xautocompleteselecteditemclass"));
-		}
-		return param._xautocomplete;
-	}
-}
-function autocomplete(param, autocompleteClass, selectedItemClass) {
-	return new function(){
-		function getI(){
-			return typeof(param) == 'string' ? _(param) : param;
-		}
-		var idInput = getI().getAttribute("id") || X.generateId();
-		function getAC(){
-			return _('_xautocomplete_' + idInput);
-		}
-		xlog.debug('autocomplete', 'Started for input ' + idInput);
-		var sourceFunction = null;
-		var thisObj = this;
-		autocompleteInstances[idInput] = thisObj;
-		getI()._xautocomplete = thisObj;
-		this.setDescriptionFunction = function(fndesc){
-			this._fndesc = stripFunction(fndesc);
-		};
-		this.setFinalDescriptionFunction = function(fn){
-			var fnfinaldesc = stripFunction(fn);
-			this._fnfinaldesc = fnfinaldesc;
-			getI()._xautocompletefnfinaldesc = fnfinaldesc;
-		};
-		this.setOnSetValueFunction = function(f){
-			this.onSetValue = stripFunction(f);
-		};
-		this.setSourceList = function(list){
-			sourceFunction = function(typed){
-				if(typed != ''){
-					var countFound = 0;
-					var selList = [];
-					for (var i in list) {
-						if (thisObj._fnfinaldesc(list[i]).toUpperCase().indexOf(typed.toUpperCase()) >= 0) {
-							countFound ++;
-							selList.push(list[i]);
-						}
-						if(countFound > 2){
-							break;
-						}
-					}
-					createDropDown(selList);
-				}else{
-					getAC().innerHTML = '';
-					getAC().setAttribute('xsel', null);
-					getAC().style.visibility = 'hidden';
-				}
-			};
-		};
-		this.setSourceFunction = function(fn){
-			fn = stripFunction(fn);
-			sourceFunction = function(typed){
-				fn(typed, createDropDown, thisObj);
-			};
-		};
-		var _afterSet = [];
-		this.addAfterSetListener = function(fn){
-			_afterSet.push(stripFunction(fn));
-		};
-		this.setInputValue = function(v){
-			var obj;
-			if(this.onSetValue){
-				obj = this.onSetValue(v);
-			}else{
-				obj = v;
-			}
-			this.setValue(obj);
-		};
-		this.setValue = function(obj){
-			var finalDesc = '';
-			if(obj){
-				finalDesc = thisObj._fnfinaldesc(obj);
-			}
-			getI()._xautocompletevalue = obj;
-			getI().value = finalDesc || '';
-			for(var i in _afterSet){
-				_afterSet[i](obj, thisObj);
-			}
-		};
-		this.getValue = function(){
-			return getI()._xautocompletevalue;
-		};
-		var fixInterval = null;
-		var timeout = null;
-		var input = getI();
-		input._xcurrentList = null;
-		
-		var selectCurrent = function(){
-			var index = parseInt(getAC().getAttribute('xsel'));
-			var input = getI();
-			var currentList = input._xautocompletecurrentList;
-			var finalDesc = input._xautocompletefnfinaldesc(currentList[index]);
-			getI().value = finalDesc;
-			getAC().innerHTML = '';
-			getAC().style.visibility = 'hidden';
-		};
-		var styleAutocomplete = '';
-		var styleAutocompleteUl = '';
-		var styleAutocompleteLi = '';
-		var styleAutocompleteA = '';
-		var styleAutocompleteASel = '';
-		if(!autocompleteClass){
-			styleAutocomplete = 'position: absolute;' +
-				'border-left: 1px solid #a3bac8;' +
-				'border-right: 1px solid #a3bac8;' +
-				'border-bottom: 1px solid #a3bac8;' +
-				'border-top: 1px solid #a3bac8;' +
-				'margin-top: -3px;' +
-				'padding-top: 3px;' +
-				'z-index: 9999;' +
-				'text-align: left;' +
-				'background-color: #f6fbfd;';
-			
-			styleAutocompleteUl = 'margin: 5px;';
-
-			styleAutocompleteLi = 'list-style: none;' +
-				'display: block;' +
-				'position: relative;' +
-				'padding: 5px;' +
-				'z-index: 1;';
-
-			styleAutocompleteA = 
-				'font-family: Lucida Grande, Lucida Sans, Arial, sans-serif;' +
-				'display: block;' +
-				'text-decoration: none;' +
-				'position: relative;' +
-				'z-index: 0;' +
-				'font-size: 12px;' +
-				'cursor: pointer;';
-
-			autocompleteClass = '';
-		}
-		var selectedItemStyle = '';
-		var unSelectedItemStyle = '';
-		if(!selectedItemClass){
-			selectedItemClass = '';
-			selectedItemStyle = 'background-color: #0d93b6;color: #f6fbfd;'
-			unSelectedItemStyle = 'color: #869aa5;';
-		}else{
-			selectedItemStyle = '';
-			unSelectedItemStyle = '';
-		}
-		var createDropDown = function(list){
-			input._xautocompletecurrentList = list;
-			var html = '';
-			for (var i in list) {
-				html += '<li style="' + styleAutocompleteLi + '"><a style="' + styleAutocompleteA + '" xindex="' + i + '">'
-						+ thisObj._fndesc(list[i]) + '</a></li>';
-			}
-			getAC().innerHTML = html == '' ? '' : '<ul style="' + styleAutocompleteUl + '">' + html + '</ul>';
-			if(html != ''){
-				setTimeout(function(){
-					//workaround
-					var fixPos = function(){
-						setTimeout(function(){
-							getAC().style.left = (getI().offsetLeft) + 'px';
-							getAC().style.top = (getI().offsetTop + getI().offsetHeigth) + 'px';		
-							if(getAC().offsetLeft != getI().offsetLeft && getAC().offsetTop != getI().offsetTop + getI().offsetHeight){
-								fixPos();
-							}
-						},1);
-					};
-					fixPos();
-					fixInterval = setInterval(function(){
-						try{
-							getAC().style.left = (getI().offsetLeft) + 'px';
-							getAC().style.top = (getI().offsetTop + getI().offsetHeight) + 'px';		
-						}catch(e){
-							clearInterval(fixInterval);
-						}
-					},100);
-					setTimeout(function(){
-						getAC().style.visibility = 'visible';
-					},200);
-						
-				},10);
-				
-				_autocomplete_select();
-				
-				var aList = xdom.getChildNodesByTagName(getAC(), 'a', true);
-				
-				function mouseover(e){
-					if(!e){
-						e = window.event;
-					}
-					var index = parseInt(e.target.getAttribute('xindex')) ;
-					_autocomplete_select(index);
-				}
-				function click(e){
-					selectCurrent();
-				}
-				xutil.each(aList, function(item){
-					item.onmouseover = mouseover;
-					item.onclick = click;
-				});
-			}else{
-				getAC().setAttribute('xsel', null);
-				if(fixInterval){
-					clearInterval(fixInterval);
-				}
-				getAC().style.visibility = 'hidden';
-			}
-		};
-		
-		getI().setAttribute('xtype', 'autocomplete');
-		var dv = document.createElement('div');
-		dv.setAttribute("class", autocompleteClass);
-		dv.setAttribute("style", styleAutocomplete);
-		dv.setAttribute("id", '_xautocomplete_' + idInput);
-		getI().parentNode.insertBefore(dv, getI().nextSibling);
-		getAC().style.width = getI().style.width;
-		getI().setAttribute("autocomplete", "off");
-		getAC().style.visibility = 'hidden'
-		
-		var _autocomplete_select = function(index){
-			var elements = xdom.getChildNodesByTagName(getAC(), 'a', true);
-			xutil.each(elements, function(item){
-				item.className = "";
-				item.parentNode.setAttribute("style", styleAutocompleteA + unSelectedItemStyle);
-			});
-			if(!index || index < 0)
-				index = 0;
-			if(index >= elements.length){
-				index = elements.length - 1;
-			}
-			getAC().setAttribute('xsel', index);
-			elements[index].className = selectedItemClass;
-			elements[index].parentNode.setAttribute("style", styleAutocompleteA + selectedItemStyle);
-			
-		};
-		if(fixInterval){
-			clearInterval(fixInterval);
-		}
-		var _startBox = function(){
-			if (timeout) {
-				clearTimeout(timeout);
-			}
-			timeout = setTimeout(function() {
-				if(sourceFunction)
-					sourceFunction(getI().value);
-			}, 200);
-		};
-		if(!getI()._x_events){
-			getI()._x_events = {}
-		}
-		if(!getI()._x_events['keyup']){
-			getI()._x_events['keyup'] = [];
-		}
-		getI()._x_events['keyup'].push(function(event) {
-			var k = null;
-			if (window.event) {
-				event = window.event;
-				k = event.keyCode;
-			} else if (event.which) {
-				k = event.which;
-			}
-			var index = parseInt(getAC().getAttribute('xsel'));
-			if (k == 13) {
-				selectCurrent();
-			} else if(k == 38){
-				_autocomplete_select(index-1);
-			} else if(k == 40){
-				_autocomplete_select(index+1);
-			} else {
-				_startBox();
-			}
-		});
-		if(!getI()._x_events){
-			getI()._x_events = {}
-		}
-		if(!getI()._x_events['focus']){
-			getI()._x_events['focus'] = [];
-		}
-		getI()._x_events['focus'].push(function(event) {
-			if (window.event) {
-				event = window.event;
-			}
-			setTimeout(function() {
-				_startBox();
-			}, 500);
-		});
-		if(!getI()._x_events){
-			getI()._x_events = {}
-		}
-		if(!getI()._x_events['blur']){
-			getI()._x_events['blur'] = [];
-		}
-		getI()._x_events['blur'].push(function(event) {
-			if (window.event) {
-				event = window.event;
-			}
-			var input = getI();
-			var currentList = input._xautocompletecurrentList;
-			var index = getAC().getAttribute('xsel');
-			if(!index){
-				for(var i in currentList){
-					if(getI().value.toUpperCase() == input._xautocompletefnfinaldesc(currentList[i]).toUpperCase()){
-						index = i;
-						break;
-					}
-				}
-			}
-			
-			if(currentList && currentList.length > 0 && index != null){
-				thisObj.setValue(currentList[index]);
-			}else{
-				thisObj.setValue(null);
-			}
-			setTimeout(function() {
-				if(fixInterval){
-					clearInterval(fixInterval);
-				}
-				getAC().style.visibility = 'hidden';
-			}, 50);
-		});
-		var autocompleteFunction = getI().getAttribute("xautocomplete");
-		if(autocompleteFunction){
-			this.setSourceFunction(createAutoCompleteFunction(getI(), autocompleteFunction));
-		}
-		var itemDescriptionFn = createDescFunction(input, "xitemdescription");
-		if(itemDescriptionFn){
-			this.setDescriptionFunction(itemDescriptionFn);
-		}
-		var descriptionFn = createDescFunction(input, "xdescription");
-		if(descriptionFn){
-			this.setFinalDescriptionFunction(descriptionFn);
-		}else{
-			descriptionFn = getI().getAttribute("xdescriptionfunction");
-			if(descriptionFn){
-				this.setFinalDescriptionFunction(createDescriptionFunction(getI(), descriptionFn));
-			}
-		}
-	}
-};
-
-function createAutoCompleteFunction(input, fnName){
-	return function(typed, callback, thisObj){
-		var fn = xobj.evalOnContext(xobj.getElementCtx(input), fnName);
-		if(fn){
-			fn(typed, callback, thisObj);
-		}
-	}
-}
-function createDescriptionFunction(input, fnName){
-	return function(item){
-		var fn = xobj.evalOnContext(xobj.getElementCtx(input), fnName);
-		if(fn){
-			return stripFunction(fn)(item);
-		}
-		return null;
-	}
-}
-function createDescFunction(input, typeFn){
-	if(input.getAttribute(typeFn)){
-		var fn = function(item){
-			var scriptFn = input.getAttribute(typeFn);
-			var ctx = xobj.getElementCtx(input);
-			var varName = input.getAttribute('xvarname');
-			window['_x_temp_autocomplete_item'] = item;
-			return xobj.evalOnContext(ctx, 'function _x_autocomplete_' + typeFn + '(){var ' + varName + ' = window["_x_temp_autocomplete_item"]; return ' + scriptFn + '};_x_autocomplete_' + typeFn + '();');
-		}
-		return fn;
-	}
-}
-
-var iterators = {};
-function __registerIterator(id, listName, itemVarName, indexVarName, html){
-	iterators[id] = {
+var _x_iterators = {};
+//function to register a iterator. Written by server
+function __registerIterator(id, listNameORTimesVar, itemVarName, indexVarName, html, isList){
+	_x_iterators[id] = {
 		html: html,
-		listVar: listName,
-		itemVar: itemVarName,
-		indexVar: indexVarName 
+		listVar: isList ? listNameORTimesVar.v : null,
+		countVar: isList ? null : listNameORTimesVar.v,
+		itemVar: isList ? (itemVarName ? itemVarName.v : null) : null,
+		indexVar: indexVarName ? indexVarName.v : null  
 	}
 }
-
-var countUpdateIterator = 0;
-var currentIteratorClass;
-var nextIteratorClass;
+var _ctxIdGen = 0; 
+var updatingIterators = false;
+var iteratorContexts = {};
+//updates the iterators on screen
 function updateIterators(){
-	var elIterArray = _c("__xiteratorprint__");
-	for(var i = 0; i < elIterArray.length; i++){
-		elIterArray[i].remove();
+	if(thisX.isImport){
+		return;
 	}
-	currentIteratorClass = '__xiterator__' + countUpdateIterator++;
-	nextIteratorClass = '__xiterator__' + countUpdateIterator;
-	var updated = {}
-	while((elIterArray = _c(currentIteratorClass)).length > 0){
-		updateIterator(elIterArray[0]);		
+	if(updatingIterators){
+		return;
 	}
-}
-
-function updateIterator(el, prev){
-	xdom.removeClass(el, currentIteratorClass);
-	xdom.addClass(el, nextIteratorClass);
-	var id = el.getAttribute("xiteratorid");
-	var type = el.getAttribute("xiteratortype");
-	var iterator = iterators[id];
-	var html = iterator.html.replace(/\{:/g, "<");
-	var ctx = xobj.getElementCtx(el);
-	var listVar = iterator.listVar;
-	var itemVar = iterator.itemVar;
-	var indexVar = iterator.indexVar;
-	var indParentVar = xdom.findAttributeInParent(el, "xiteratortempvar");
-	var list;
+	updatingIterators = true;
+	var elArray = [];
 	try{
-		var _listVarName = listVar;
-		if(prev && indParentVar != null){
-			_listVarName = prev[indParentVar] + _listVarName;
-		}
-		list = xobj.evalOnContext(ctx, _listVarName);
-	}catch(e){}
-	if(list && list.length){
-		var itemVarListArray = [];
-		function ctype(html){
-			var parent;
-			var resultHtml = [];
-			function fill(j, js){
-				var fn = 'function __temp_fn__(){';
-				var itemIndexVar = 'var ' + (indexVar && indexVar != 'null' ? indexVar : '__temp_index_var') + ' = ' + j + ';';
-				var itemListVar = 'var ' + itemVar + ' = ' + listVar + '[' + j + '];';
+		//gets all iterator's inner elements on context by the property status=none
+		var iterEl;
+		while((iterEl = xdom.findFirstIteratorWithNoneStatus())){
+			try{
+				elArray.push(iterEl);
+				var iid = iterEl.xiterId;
+				iterEl.xiteratorStatus = "updating";
+				var iteratorArray = [];
+				var indexes = [];
+				var parent;
+				var current = iterEl;
+				var indexInParent = null;
 				
-				var vars = itemIndexVar + itemListVar;
-				if(prev && indParentVar != null){
-					vars = prev[indParentVar] + vars;
+				if(!iteratorContexts[iid]){
+					iteratorContexts[iid] = [];
 				}
-				itemVarListArray[j] = vars;
-				fn += vars;
-				fn += ';return ' + js.replace(/!#!/g, '"') + ';};__temp_fn__();';
-				return fn;
-			}
-			for(var j = 0; j < list.length; j++){
-				var htmlTemp = html;
-				try{
-					var fnReplace = function(m, js){
-						try{
-							return xobj.evalOnContext(ctx, fill(j, js));
-						}catch(e){
-							xlog.error("Error on xIterator, xattrobject replace", e);
-							return '';
-						};
-					};
-					htmlTemp = htmlTemp.replace(/<xobject xvar=.(.*?).><\/xobject>/g, fnReplace);
-					htmlTemp = htmlTemp.replace(/<xattrobject xvar=.(.*?).><\/xattrobject>/g, fnReplace);
-					htmlTemp = htmlTemp.replace(/_outxdynattr_.*?=.##(.*?)##./g, fnReplace);
-					fnReplace = function(m, js){
-						return "xvar=\"" + listVar + '[' + j + '].';
-					};
-					htmlTemp = htmlTemp.replace(new RegExp('xvar=\"(' + itemVar + ')\.', 'g'), fnReplace);
-					fnReplace = function(m, js){
-						return "xvar='" + listVar + '[' + j + '].';
-					};
-					htmlTemp = htmlTemp.replace(new RegExp('xvar=\'(' + itemVar + ')\.', 'g'), fnReplace);
-					
-					fnReplace = function(m, nodeName){
-						return "<" + nodeName + " xiteratortempvar='" + j + "' ";
-					};
-					htmlTemp = htmlTemp.replace(/<([^\s>]*)/, fnReplace);
-					
-					resultHtml.push(htmlTemp);
-				}catch(e){
-					xlog.error("Error on xIterator", e);
+				var ctx;
+				//get parent iterators
+				while((parent = xdom.findParentIterator(current))){
+					var pIid = parent.xiterId;
+					indexInParent = current.xiterIndex;
+					indexes.splice(0, 0, indexInParent);
+					iteratorArray.splice(0, 0, _x_iterators[pIid]);
+					current = parent;
 				}
-			}
-			
-			if(type != 'sibling'){
-				parent = el;
-			}else{
-				parent = el.parentNode;
-			}
-			var html = [];
-			if(parent.children.length == 0){
-				html = [resultHtml.join(" ")];
-			}else{
-				for(var i = 0; i < parent.children.length; i++){
-					var c = parent.children[i];
-					html.push(c.outerHTML);
-					if(type == 'sibling' && c.getAttribute("xiteratorid") == id){
-						html.push(resultHtml.join(" "));
-					}else if(type != 'sibling' && i == parent.children.length - 1){
-						html.push(resultHtml.join(" "));
+				if(!iteratorContexts[iid][indexInParent]){
+					//create fn context for iterator
+					var fnCtx = ['var __transl = {};var __t;var __all;'];
+					var fnUpdateCtx = ['this.update = function(){__t = null;__all=[];'];
+					var i;
+					for(i = 0; i < iteratorArray.length; i++){
+						var item = iteratorArray[i];
+						fnCtx.push("var _x_list_" + i);
+						fnCtx.push("var _x_count_" + i + "=0");
+						fnCtx.push("var _xold_list_" + i + "=null");
+						fnCtx.push("var _xold_count_" + i);
+						if(item.itemVar){
+							fnCtx.push("var " + item.itemVar);
+							fnCtx.push("var old_" + item.itemVar + "=null");					
+						}
+						fnCtx.push("var " + item.indexVar + "=__arg[" + i + "]");
+						fnUpdateCtx.push("_xold_list_" + i + "=_x_list_" + i);
+						fnUpdateCtx.push("_xold_count_" + i + "=_xold_count_" + i);
+						fnUpdateCtx.push("try{_x_count_" + i + "=" + item.countVar + "}catch(e){_x_count_" + i + "=0;}");
+						if(item.listVar){
+							fnUpdateCtx.push("try{_x_list_" + i + "=X$.copyArray(" + item.listVar + ");}catch(e){_x_list_" + i + "=[];}");
+							fnUpdateCtx.push("__t='" + item.listVar + "[' + __arg[" + i + "] + ']'");
+							fnUpdateCtx.push("for(var __k in __transl){__transl[__k].push(__t);}");
+							fnUpdateCtx.push("__transl." + item.itemVar + "=[__t]");
+							fnUpdateCtx.push("__all.push(__t)");
+							fnUpdateCtx.push("old_" + item.itemVar + "=" + item.itemVar);
+							fnUpdateCtx.push(item.itemVar + "=_x_list_" + i + "[__arg[" + i + "]]");
+						}
 					}
+					var iterator = _x_iterators[iid];
+					if(iterator.listVar){
+						fnCtx.push("var _x_list_" + i);
+						fnCtx.push("var _xold_list_" + i);
+						fnUpdateCtx.push("_xold_list_" + i + "= _x_list_" + i);
+						
+						fnUpdateCtx.push("try{_x_list_" + i + "=X$.copyArray(" + iterator.listVar + ");}catch(e){_x_list_" + i + "=[];}");
+						if(!iterator.itemVar){
+							iterator.itemVar = "_xv" + xutil.generateId();
+						}
+						fnCtx.push("var " + iterator.itemVar);
+						fnCtx.push("var old_" + iterator.itemVar);
+						fnCtx.push("this.isList = true");
+					}else{
+						fnCtx.push("this.isList = false");
+						fnCtx.push("var _x_count_" + i + "=0");
+						fnCtx.push("var _xold_count_" + i + "=0");
+						fnUpdateCtx.push("_xold_count_" + i + "=_x_count_" + i);
+						fnUpdateCtx.push("try{_x_count_" + i + "=" + iterator.countVar + "}catch(e){_x_count_" + i + "=0;}");
+					}
+					if(!iterator.indexVar){
+						iterator.indexVar = "_xiv" + xutil.generateId();
+					}
+					fnCtx.push("var " + iterator.indexVar);
+					fnCtx.push("this.set = function(__temp_index_param_iter){" + iterator.indexVar + " = __temp_index_param_iter;");
+					if(iterator.listVar){
+						fnCtx.push(iterator.itemVar + " = _x_list_" + i + "[__temp_index_param_iter];");
+					}
+					fnUpdateCtx.push("}\n")
+					fnCtx.push("}");
+					fnCtx.push(fnUpdateCtx.join(";\n"));
+					fnCtx.push("this.get = function(__temp_index_param_iter){return _x_list_" + i + "[__temp_index_param_iter];}");
+					fnCtx.push("this.getOld = function(__temp_index_param_iter){return _xold_list_" + i + "[__temp_index_param_iter];}");
+					fnCtx.push("this.length = function(){return this.isList ? _x_list_" + i + ".length : _x_count_" + i + "}");
+					fnCtx.push("this.oldLength = function(){return this.isList ? (_xold_list_" + i + " ? _xold_list_" + i + ".length : 0) : _xold_count_" + i + "}");
+					fnCtx.push("this.translate = function(param){\n" +
+							"if(!this.isList)return param;" +
+							"var sp = param.split('.');\n" +
+							"var vName = sp[0];\n" +
+							"sp.splice(0,1);\n" +
+							"var array = __transl[vName];\n" +
+							"if(array){\n" +
+							"return array.concat(sp).join('.');\n" +
+							"};\n" +
+							"if(vName != '" + iterator.itemVar + "'){\n" +
+							"return param;\n" +
+							"};\n" +
+							"var result = this.translate('" + iterator.listVar + "');\n" +
+							"return result + '[' + " + iterator.indexVar + " + ']' + (sp.length > 0 ? '.' + sp.join('.') : '');\n" +
+							"}");
+					fnCtx.push("this.eval = function(f){try{return eval(f);}catch(e){throw new Error('Error on iterator script: ' + f + '. Cause: ' + e.message);}}");
+					//
+					try{
+					    var f = thisX.eval("(function(){return function(__arg){" + fnCtx.join(";\n") + "}})()");
+					}catch(e){
+					    throw Error("Invalid expression iterator/if " + (iterator.countVar || iterator.listVar));
+					}
+
+					ctx = new f(indexes);
+					ctx.id = _ctxIdGen++;
+					iteratorContexts[iid][indexInParent] = ctx;
+				}else{
+					ctx = iteratorContexts[iid][indexInParent];
+				}
+				ctx.update();
+				updateIterator(iterEl, indexInParent);
+			}catch(e){
+				xlog.error("xiterator: Error updating iterator instance", e);
+			}
+		}
+	}catch(e){
+		xlog.error("xiterator: Error updating iterators", e);
+	}
+	for(var i = 0; i < elArray.length; i++){
+		elArray[i].xiteratorStatus = "none";
+	}
+	updatingIterators = false;
+}
+
+//returns the last iterator context of the element
+function getIteratorCtx(e){
+	var id = e.xcontentIterId || e.xiterId;
+	var iteratorElement = xdom.findIteratorElement(e);
+	var indexInParent = iteratorElement && (iteratorElement.xiterIndex || iteratorElement.xiterIndex == 0) ? iteratorElement.xiterIndex : null;
+	return iteratorContexts[id][indexInParent];
+}
+
+
+function _checkDiffLists(ctxList){
+	var result = {added:[],removed:[],remaining:{}};
+	//times iterator
+	if(!ctxList.isList){
+		var lastCtxLength = ctxList.oldLength();
+		if(lastCtxLength > ctxList.length()){
+			for (var i = ctxList.length(); i < lastCtxLength; i++) {			
+				result.removed.push(i);
+			}
+		}else if(ctxList.length() > lastCtxLength){
+			for (var i = lastCtxLength; i < ctxList.length(); i++) {
+				result.added.push(i);
+			}
+		}
+		return result;
+	}
+	//list iterator
+	var checkPoint = 0;
+	var maxChanged = -1;
+	for(var i = 0; i < ctxList.length(); i++){
+		var icurr = ctxList.get(i);
+		var found = false;
+		for(var j = checkPoint; j < ctxList.oldLength(); j++){
+			var ilast = ctxList.getOld(j);
+			if(icurr === ilast || (typeof(icurre) != "object" && typeof(ilast) != "object")){
+				found = true;
+				if(j != i){
+					maxChanged = Math.max(maxChanged, j);
+					result.remaining[j] = i;					
+				}
+				while(checkPoint < j){
+					result.removed.push(checkPoint++);
+				}
+				checkPoint++;
+				break;
+			}
+		}
+		if(!found){
+			result.added.push(i);
+		}
+	}
+	while(checkPoint < ctxList.oldLength()){
+		result.removed.push(checkPoint++);
+	}
+	//if the index of an add is the same of a remove, keep them, so they will be change by dynamic properties
+	for (var i = 0; i < result.removed.length; i++) {
+		if(result.removed[i] > maxChanged){
+			continue;
+		}
+		for (var j = 0; j < result.added.length; j++) {
+			if(result.added[j] == result.removed[i]){
+				result.added.splice(j, 1);
+				result.removed.splice(i--, 1);
+			}
+		}
+	}
+	return result;
+}
+
+//update attributes of an existing element in a iterator
+function _updateIterElementAttributes(el, html, ctx, xiterId){
+	var k = 0;
+	var children = xdom._getChildren(el);
+	for(var j = 0; j < children.length; j++){
+		var e = children[j];
+		if(e.nodeName.toUpperCase() == 'XSCRIPT' || e.xscript){
+			continue;
+		}
+		var c;
+		while(true){
+			if(k == html.c.length){
+				k = 0;
+			}
+			c = html.c[k++];
+			if(c.n){
+				break;
+			}
+		}
+		for(var attName in c.a){
+			if(attName == 'value' && e == document.activeElement){
+				continue;
+			}
+			ctx.set(e.xiterIndex);
+			var val = [];
+			for(var l = 0; l < c.a[attName].length; l++){
+				var v = c.a[attName][l];
+				if(v.v){
+					val.push(v.v);
+				}else{
+					val.push(ctx.eval(v.s));
 				}
 			}
-			return [html.join(""), parent];
+			if(attName.indexOf('on') == 0 && e.getAttribute("data-x" + attName)){
+				attName = "data-x" + attName;
+			}
+			val = val.join('');
+			if(attName == 'href' && val.indexOf('javascript:') == 0 && e.getAttribute("data-x_event_hrefclick") == 'true'){
+                e.href = 'javascript:;';
+            }else if(attName == 'data-xbind'){
+				var t = ctx.translate(val);
+				if(!t){
+					t = val;
+				}
+				xdom.setAtt(e, attName, t);
+			}else if(attName == 'checked'){
+				e.checked = val.toUpperCase() == 'TRUE';
+			}else if(attName == 'disabled'){
+				e.disabled = val.toUpperCase() == 'TRUE';
+			}else if(attName == 'value'){
+				e.value = val;
+			}else if(val != e.getAttribute(attName)){
+				if(attName == 'id'){
+					val = val.replace('#modal:', thisX.CTX + ":");
+				}
+				xdom.setAtt(e, attName, val);
+			}
 		}
-		var res = ctype(html, el);
-		var parent = res[1];
-		parent.innerHTML = res[0];
-		var childIterators = xdom.getChildNodesByClassName(parent, "__xiterator__", true, true);
-		for(var i = 0; i < childIterators.length; i++){
-			updateIterator(childIterators[i], itemVarListArray);
+		if(xiterId == e.xcontentIterId){
+			_updateIterElementAttributes(e, c, ctx, xiterId);
 		}
 	}
 }
 
-_external(__registerIterator);
+//update scripts in an element iterator
+function _updateIterElementScripts(el, ctx, xiterId){
+	var array = xdom.getChildNodesByProperty(el, "xscript", true, false, false);
+	for(var i = 0; i < array.length; i++){
+		var node = array[i];
+		if(node.xcontentIterId == xiterId){
+			ctx.set(node.xiterIndex);
+			var c = ctx;
+			var fnName = 'eval';
+			if(node._compCtx){
+				c = node._compCtx;
+				fnName = '_xcompEval';
+			}
+			var html;
+			try{
+				html = c[fnName](node.xdataXScript);
+				html = html == null || html == undefined ? '' : html;
+				html += '';
+			}catch(e){
+				html = '';
+			}
+			if(node.nodeType == 3){
+			    if(node.textContent != html){
+			        node.textContent = html;
+			    }
+			}else if(node.innerHTML != html){
+				node.innerHTML = html;			
+			}			
+		}
+	}
+}
+
+function _createElements(html, parent, index, xid, ctx){
+	//temporary suffix for components to avoid diferent instances of components to have the same context
+	var compCtxSuffix = {};
+	_createHTML(html, parent, index, xid, 0, compCtxSuffix, ctx);
+}
+
+//check if ctx for component is already created
+function _checkCompId(e, compCtxSuffix, ctx){
+	ctx.set(e.xiterIndex);
+	xcomponents.prepareComponentContext(e, compCtxSuffix, ctx, "this._iter=" + ctx.id + ";");
+}
+
+function _createHTML(html, parent, index, xid, level, compCtxSuffix, ctx){
+	var node;
+	var insertBeforeElement = null;
+	if(level == 0){
+		var count = 0;
+		var childNodes = xdom._getChildNodes(parent);
+		for (var i = 0; i < childNodes.length; i++) {
+			var nAux = childNodes[i];
+			if(nAux.xiterFirstNode && count++ == index){
+				insertBeforeElement = nAux;
+			}
+		}
+		if(!insertBeforeElement && parent.xiteratorOpenNode){
+			insertBeforeElement = parent.xcloseNode;
+		}
+	}
+	for(var i = 0; html.c && i < html.c.length; i++){
+		//iterate over children
+		var child = html.c[i];
+		if(child.t){
+			//text
+			node = document.createTextNode(child.t);
+			node.xiterIndex = index;
+			node.xcontentIterId = xid;
+			xdom._insertBefore(parent, node, insertBeforeElement);
+		}else if(child.x){
+			node = parent.nodeName != 'OPTION' ? xdom.createElement('span') : document.createTextNode('');
+			node.xdataXScript = child.x;
+			node.xscript = true;
+			node.xiterIndex = index;
+			node.xcontentIterId = xid;
+			node.xnodeId = xutil.generateId();
+			xdom._setHiddenAttributesOnElement(node, child);
+			_checkCompId(node, compCtxSuffix, ctx);
+			xdom._insertBefore(parent, node, insertBeforeElement);
+		}else{
+			//element
+			var isHiddenIterator = false;
+			if(child.n.toLowerCase() == 'xiterator'){//invisible iterator
+				node = document.createTextNode('');
+				node.xiteratorOpenNode = true;
+				isHiddenIterator = true;
+				if(!child.h){
+					child.h = {};
+					for (var attName in child.a) {
+						var att = child.a[attName];
+						child.h[attName] = att[0].v;
+					}
+					delete child.a;
+				}
+			}else{
+				node = xdom.createElement(child.n);
+			}
+			node.xiterIndex = index;
+			var isIterator = isHiddenIterator || xdom._isIterator(child);
+			node.xcontentIterId = xid;
+			xdom._setHiddenAttributesOnElement(node, child);
+			_checkCompId(node, compCtxSuffix, ctx);
+			if(!isIterator){
+				_createHTML(child, node, index, xid, level + 1, compCtxSuffix, ctx);
+			}else{
+				node.xiteratorElement = true;
+				node.xiteratorStatus = "none";
+				node.xiterId = child.xiterid;
+			}
+			xdom._insertBefore(parent, node, insertBeforeElement);
+			if(isHiddenIterator){
+				var ce = document.createTextNode('');
+				node.xcloseNode = ce;
+				ce.xopenNode = node;
+				ce.xiteratorCloseNode = true;
+				xdom._insertBefore(parent, ce, insertBeforeElement);
+			}
+		}
+		if(level == 0 && i == 0){
+			node.xiterFirstNode = true;
+		}
+	}
+}
+
+function _removeIteratorChildNodes(){
+
+}
+
+function updateIterator(el, indexInParent){
+	var id = el.xiterId;
+	var ctx = iteratorContexts[id][indexInParent];
+	var iterator = _x_iterators[id];
+	var htmlStruct = iterator.html;
+	
+	//iterate list
+	var diff = _checkDiffLists(ctx);
+	//remove the removed items
+	var i = 0;
+	for(; i < diff.removed.length; i++){
+		var indexRemove = diff.removed[i];
+		var nodeList = xdom.getChildNodesByProperty(el, "xiterIndex", indexRemove, false, false);
+		for (var j = 0; j < nodeList.length; j++) {
+		    var node = nodeList[j];
+			if(node.xcontentIterId == id){
+			    if(node.xiterId){
+			        iteratorContexts[node.xiterId] = null;
+			    }
+			    xdom.removeNode(node);
+			}
+		}
+	}
+	//update indexes on elements
+	//get all first, because it cannot change one at time
+	var changeIdNodeList = [];
+	for(var i in diff.remaining){
+		changeIdNodeList = changeIdNodeList.concat(xdom.getChildNodesByProperty(el, "xiterIndex", i, false, false));
+	}
+	//change with all gathered
+	for (var j = 0; j < changeIdNodeList.length; j++) {
+		if(changeIdNodeList[j].xcontentIterId == id){
+			changeIdNodeList[j].xiterIndex = diff.remaining[changeIdNodeList[j].xiterIndex];
+		}
+	}
+	//add the new elements
+	for(var j = 0; j < diff.added.length; j++){
+		_createElements(htmlStruct, el, diff.added[j], id, ctx);
+	}
+	//update the ones that havent changed
+	_updateIterElementScripts(el, ctx, id);
+	_updateIterElementAttributes(el, htmlStruct, ctx, id);
+}
+
+_expose(__registerIterator);
 _external(popup);
-_external(closePopup);
 _external(msg);
 _external(closeMsg);
 _external(showLoading);
 _external(closeLoading);
-_external(clearTable);
-_external(addToTable);
-_external(fillTable);
-_external(fillSelect);
-_external(onAddModalButton);
 _external(highlight);
 _external(onHighlight);
 _external(removeHighlight);
 _external(onRemoveHighlight);
-_external(getAutocomplete);
-_expose(getUpdatables);
 _expose(updateIterators);
-_external(registerUpdatable);
 _expose(buildHtmlNodeFromString);
-
-
-
+_external(toggleModal);
+_external(modal);
+_external(modalS);
+_expose(getIteratorCtx);
+_external(setSpaModalNode);
+_expose(onPushStateSpa);

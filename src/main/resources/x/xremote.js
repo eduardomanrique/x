@@ -1,113 +1,208 @@
 var metaObj = %meta%;
 
-var controllerCallbacks = {}
-function importScript(jsName, callback){
+//import remote script
+function importScript(jsName, insertPoint, callback, parentX, isSpa){
 	xlog.debug("ximport", "Importing script " + jsName);
-	var scr = document.createElement("script");
-	var path = "%ctx%" + jsName + '?_xcontroller=true';
-	xlog.debug("ximport", "Path: " + path); 
-	scr.src = path;
-	var _firstScript = document.getElementsByTagName('script')[0];
-	_firstScript.parentNode.insertBefore(scr, _firstScript);
-	if(!controllerCallbacks[jsName]){
-		controllerCallbacks[jsName] = [];
-	}
-	controllerCallbacks[jsName].push(callback);
+	var path = "%ctx%" + jsName;
+	var X = new _XClass(parentX);
+	X.isSpa = isSpa;
+	X._getJS(path, insertPoint, callback);
 }
 
+var importCallback = {}
+
+//to be written on server based on annotations
 function importS(jsName, callback){
-	importScript(jsName, function(_c){
-		var fnName = '__xtemp__fn__' + xutil.generateId();
-		X[fnName] = function(){
-			callback(_c);
-		}
-		xobj.evalOnContext(_c, 'var fnName = "' + fnName + 
-				'";if(__xvars__){var __chord = X.createChord(__xvars__.length, function(){try{onInit()}catch(e){};X[fnName]()});__xvars__.__exec(__chord);}else{try{onInit()}catch(e){};try{X[fnName]();}catch(e){}}');
-	});	
+	importCallback[jsName] = callback;
+	importScript(jsName, null, callback, X);
+}
+//to be written on server when a util script returns from server
+function _addImportToInitChord(object){
+	addToInitChord(object, importCallback[object.resourceName]);
 }
 
-function _addController(c){
-	xlog.debug("ximport", "_addController cid: " + c._jsName);
-	var callback = controllerCallbacks[c._jsName].shift();
-	xlog.debug("ximport", "_addController callback: " + callback);
-	xobj.onController(c, callback);
-	xlog.debug("ximport", "_addController done");
+//add to initialization chord
+function addToInitChord(object, callback){
+	var fnName = '__xtemp__fn__' + xutil.generateId();
+	X[fnName] = function(){
+		if(callback){
+			callback(object);			
+		}
+	}
+	thisX.eval('var fnName = "' + fnName + 
+			'";if(__xbinds__){var __chord = X.createChord(__xbinds__.length, function(){try{onInit()}catch(e){};X[fnName]()});__xbinds__.__exec(__chord);}else{try{onInit()}catch(e){};try{X[fnName]();}catch(e){}}');
 }
 
 function go(path, param) {
-	xvisual.showLoading();
+	//xvisual.showLoading();
 	setTimeout(function(){
 		if(param){
-			path += '?_xjsonxparam=' + encodeURI(xutil.stringify(param));
+			path += '?_xjp=' + encodeURIComponent(xutil._btoa(xutil.stringify(param)));
 		}
 		var fullPath = '%ctx%' + path;
-		window.location.href = fullPath;
+		//window.location.href = fullPath;
+        xvisual.onPushStateSpa(fullPath);
 	},10);
 }
 
-function prepareUrl(url) {
+function _prepareUrl(url) {
 	if (url[0] == '/') {
 		url = url.substring(1);
 	}
 	return url;
 }
 
-function getArgs(args){
+//Get the arguments for a service call.
+//If the last two elements are functions, one is a callback and the other is the exception handler
+function _getArgs(args){
 	var p = Array.prototype.slice.call(args);
 	var callback = p.pop();
 	var exceptionHandler = null;
 	if(typeof(p[p.length -1]) == 'function'){
-		
 		exceptionHandler = callback;
 		callback = p.pop();
 	}
 	return [p, callback, exceptionHandler];
 }
 
-function createRemoteFunction(alias, method){
+//makes a post to a hidden form
+function _postHiddenForm(path, params) {
+    var form = xdom.createElement("form");
+    xdom.setAtt(form, "method", "POST");
+    xdom.setAtt(form, "action", path);
+
+    for(var key in params) {
+        if(params.hasOwnProperty(key)) {
+            var hiddenField = xdom.createElement("input");
+            xdom.setAtt(hiddenField, "type", "hidden");
+            xdom.setAtt(hiddenField, "name", key);
+            xdom.setAtt(hiddenField, "value", params[key]);
+
+            form.appendChild(hiddenField);
+         }
+    }
+
+    document.body.appendChild(form);
+    form.submit();
+}
+
+//all service calls when on initmode must have their callback called so the X instance can start to update screen
+var _initMode;
+function setInitMode(){
+    _initMode = true;
+}
+function unsetInitMode(){
+    _initMode = false;
+    _checkReady();
+}
+var _countCallsInInitMode = 0;
+
+function _configCallbackForInitMode(callback){
+    //if there is a callback and it is in initMode (onInit not finished) we need to wait callback return
+    //we put it on the function so we avoid if it was a call on a setTimeout for instance
+    if(callback && _initMode){
+        callback._initMode = true;
+        _countCallsInInitMode++;
+    }
+}
+
+function decreaseCountInInitMode(){
+    _countCallsInInitMode--;
+    _checkReady();
+}
+
+function _checkReady(){
+    if(_countCallsInInitMode == 0){
+        thisX._ready = true;
+    }
+}
+
+//create a remote function of a service
+function _createRemoteFunction(alias, method, responseInOutputStream){
 	var methodName = method.name;
 	var type = method.type;
 	var nocache = method.nocache;
-	function _fillParameters(args){
+	//prepare the parameters
+	function _fillParameters(args, parametersMap){
 		var params = [];
 		for(var i in args[0]){
-			var json = xutil.stringify(args[0][i]);
-			params.push("_param" + i + "=" + encodeURIComponent(json));
+			//stringify and encode
+			var clone = xutil.clone(args[0][i], {changeDateToLong: true});
+			var json = xutil.stringify(clone);
+			var paramName = "_param" + i;
+			var paramValue = encodeURIComponent(json);
+			if(parametersMap){
+				parametersMap[paramName] = paramValue;
+			}else{
+				params.push(paramName + "=" + paramValue);				
+			}
 		}
+		//check nocache
 		if(nocache == "true"){
-			params.push("&_xnocache=" + xutil.generateId());
+			if(parametersMap){
+				parametersMap["_xnocache"] = xutil.generateId();
+			}else{
+				params.push("&_xnocache=" + xutil.generateId());			
+			}
 		}
-		return params.join("&");
+		//timezone
+		var tz = (new Date().getTimezoneOffset() / 60) * -1;
+		if(parametersMap){
+			parametersMap['_tz'] = tz;
+		}else{
+			params.push('&_tz=' + tz);
+			return params.join("&");
+		}
 	}
 	if(type == 'GET'){
+		//get call
 		return function(){
-			var args = getArgs(arguments);
+			var args = _getArgs(arguments);
 			var callback = args[1];
+			_configCallbackForInitMode(callback);
 			var exceptionCallback = args[2];
+			_configCallbackForInitMode(exceptionCallback);
 			var paramArray = [alias + '/' + methodName + '?' + _fillParameters(args), callback];
 			if(exceptionCallback){
 				paramArray.push(exceptionCallback);
 			}
-			callGET.apply(X, paramArray);
+			if(!responseInOutputStream){
+				//repose is json
+				_callGET.apply(X, paramArray);				
+			}else{
+				//repose is not json (image or other kind of resource)
+				location.reload("/x/" + _prepareUrl(paramArray[0]));
+			}
 		}
 	}else{
+		//post call
 		return function(){
-			var args = getArgs(arguments);
+			var args = _getArgs(arguments);
 			var callback = args[1];
+			_configCallbackForInitMode(callback);
 			var exceptionCallback = args[2];
+			_configCallbackForInitMode(exceptionCallback);
 			if(_isUploading){
+				//has a upload file
 				_isUploading = false;
 				if(exceptionCallback){
 					paramArray.push(exceptionCallback);
 				}
 				_upload(alias + '/' + methodName, _fillParameters(args), callback, exceptionCallback);
 			}else{
-				var paramArray = [alias + '/' + methodName, _fillParameters(args), callback];
-				if(exceptionCallback){
-					paramArray.push(exceptionCallback);
+				if(!responseInOutputStream){
+					//repose is json
+					var paramArray = [alias + '/' + methodName, _fillParameters(args), callback];
+					if(exceptionCallback){
+						paramArray.push(exceptionCallback);
+					}
+					_callPOST.apply(X, paramArray);
+				}else{
+					//repose is not json (image or other kind of resource)
+					var paramArray = {};
+					_fillParameters([arguments], paramArray);
+					_postHiddenForm("/x/" + _prepareUrl(alias + '/' + methodName), paramArray)
 				}
-			
-				callPOST.apply(X, paramArray);
 			}
 		}
 	}
@@ -123,6 +218,7 @@ function ping(onSuccess, onError){
 	});
 }
 
+//to be written by server. Makes a bind to a remote service
 function bindService(alias){
 	var result = {};
 	if(!metaObj[alias]){
@@ -134,93 +230,119 @@ function bindService(alias){
 	for(var i in meta.methods){
 		var method = meta.methods[i].name;
 		var type = meta.methods[i].type;
-		result[method] = createRemoteFunction(alias, meta.methods[i]);
+		var responseInOutputStream = meta.methods[i].responseInOutputStream == 'true';
+		result[method] = _createRemoteFunction(alias, meta.methods[i], responseInOutputStream);
 	}
 	return result;
 }
 
-function callGET() {
-	callAjaxGET(prepareUrl(arguments[0]), arguments[1], arguments[2]);
+function _callGET() {
+	_callAjaxGET(_prepareUrl(arguments[0]), arguments[1], arguments[2]);
 }
 
-function callPOST() {
-	callAjaxPOST(prepareUrl(arguments[0]), arguments[1],
+function _callPOST() {
+	_callAjaxPOST(_prepareUrl(arguments[0]), arguments[1],
 			arguments[2], arguments[3]);
 }
 
-function callSync() {
+//not being used
+function _callSync() {
 	if (arguments.length == 3) {
-		callSyncAjaxGET(prepareUrl(arguments[0]), arguments[1]);
+		_callSyncAjaxGET(_prepareUrl(arguments[0]), arguments[1]);
 	} else {
-		callSyncAjaxPOST(prepareUrl(arguments[0]), arguments[1],
+		_callSyncAjaxPOST(_prepareUrl(arguments[0]), arguments[1],
 				arguments[2]);
 	}
 }
-function onCallback(c, e, url){
+
+//callback to a server response
+function _onCallback(c, e, url){
 	return function(){
-		var result = eval("__x = " + arguments[0]);
+		var result = thisX.eval("__x = " + arguments[0]);
 		if(result.__response){
 			if(c){
-				c.apply(null, [result.result]);				
+			    var tempInitMode = false;
+			    if(c._initMode && !_initMode){
+			        //not in init mode anymore
+			        _initMode = true;
+			        tempInitMode = true;
+			    }
+				c.apply(null, [result.result]);
+				if(tempInitMode){
+				    _initMode = false;
+				}
+				decreaseCountInInitMode();
 			}
 		}else{
 			if(result.__not_authenticated){
-				X.go('/x/no_authentication');
+				thisX.go('/x/no_authentication');
 			}
 			if(e){
+			    var tempInitMode = false;
+                if(e._initMode && !_initMode){
+                    //not in init mode anymore
+                    _initMode = true;
+                    tempInitMode = true;
+                }
 				e.apply(null, [{
 					name: result.exceptionName,
 					message: result.message
-				}]);				
+				}]);
+                if(tempInitMode){
+                    _initMode = false;
+                }
+                decreaseCountInInitMode();
 			}else{
 				var msg = "Error calling url: " + url + ".\n Exception: " + result.exceptionName + "\nMessage: " + result.message;
 				xlog.error(msg);
 				throw msg;
 			}
 		}
+		X$._update();
 	}
 }
 
-function callAjaxGET(purl, success, exception) {
+function _callAjaxGET(purl, success, exception) {
 	var url = "%ctx%/x/" + purl;
 	ajax({
 		type : "get",
 		url : url,
 		async : true,
-		success : onCallback(success, exception, purl),
+		success : _onCallback(success, exception, purl),
 		error : function(jqXHR, textStatus, errorThrown) {
 			// Ignore
 		}
 	});
 }
-function callSyncAjaxGET(purl, success, exception) {
+//not being used
+function _callSyncAjaxGET(purl, success, exception) {
 	var url = "%ctx%/x/" + purl;
 	ajax({
 		type : "get",
 		url : url,
 		async : false,
-		success : onCallback(success, exception, purl)
+		success : _onCallback(success, exception, purl)
 	});
 }
-function callAjaxPOST(url, param, success, exception) {
+function _callAjaxPOST(url, param, success, exception) {
 	ajax({
 		type : "POST",
 		url : "%ctx%/x/" + url,
 		data : param,
 		async : true,
 		dataType : "html",
-		success : onCallback(success, exception, url)
+		success : _onCallback(success, exception, url)
 	});
 }
-
-function callSyncAjaxPOST(url, param, success, exception) {
+//not being used
+function _callSyncAjaxPOST(url, param, success, exception) {
 	ajax({
 		type : "POST",
 		url : "%ctx%/x/" + url,
 		data : param,
 		async : false,
 		dataType : "html",
-		success : onCallback(success, exception, url)
+		success : _onCallback(success, exception, url)
 	});
 }
 function ajax(param){
@@ -260,8 +382,9 @@ function ajax(param){
 	xmlhttp.send(data);
 }
 
+//get html for a modal
 function getHtmlPage(url, callback){
-	var _url = "%ctx%" + url + "?_xpopup=true";
+	var _url = "%ctx%" + url + "?_xmd=true";
 	ajax({
 		type : "get",
 		url : _url,
@@ -280,21 +403,22 @@ function getHtmlPage(url, callback){
 var _file;
 var _formUpload;
 var _isUploading;
+//prepare a upload form
 function prepareForUpload(id){
-	var file = document.getElementById(id);
+	var file = xdom.getElementById(id);
 	if(!file.getAttribute("name") || file.getAttribute("name") == ""){
-		file.setAttribute("name", "_file_upload_" + id);
+		xdom.setAtt(file, "name", "_file_upload_" + id);
 	}
-	var ifr = document.createElement("iframe");
-	ifr.setAttribute("src", "");
-	ifr.setAttribute("style", "display: none;");
-	ifr.setAttribute("name", "upload_iframe");
+	var ifr = xdom.createElement("iframe");
+	xdom.setAtt(ifr, "src", "");
+	xdom.setAtt(ifr, "style", "display: none;");
+	xdom.setAtt(ifr, "name", "upload_iframe");
 	file.parentNode.insertBefore(ifr, file);
 	file.parentNode.removeChild(file);
-	var frm = document.createElement("form");
-	frm.setAttribute("enctype", "multipart/form-data");
-	frm.setAttribute("target", "upload_iframe");
-	frm.setAttribute("method", "POST");
+	var frm = xdom.createElement("form");
+	xdom.setAtt(frm, "enctype", "multipart/form-data");
+	xdom.setAtt(frm, "target", "upload_iframe");
+	xdom.setAtt(frm, "method", "POST");
 	frm.appendChild(file);
 	ifr.parentNode.insertBefore(frm, ifr.nextSibling);
 	
@@ -304,20 +428,20 @@ function prepareForUpload(id){
 }
 
 var _callbackUpload = null;
+//submits the upload
 function _upload(url, parameters, callback, onException) {
-	_formUpload.setAttribute("action", "%ctx%/x/" + url + "?" + parameters);
-	_callbackUpload = onCallback(callback, onException, url);
+	xdom.setAtt(_formUpload, "action", "%ctx%/x/" + url + "?" + parameters);
+	_callbackUpload = _onCallback(callback, onException, url);
 	_formUpload.submit();
 	_formUpload = null;
 }
-
+//upload response
 function _uploadResponse(response) {
 	_file.value = null;
 	_file = null;
 	_callbackUpload(response);
 	xobj.updateInputs();
 }
-
 
 _expose(importScript);
 _external(importS, 'import');
@@ -327,6 +451,8 @@ _external(bindService);
 _external(prepareForUpload);
 _external(getHtmlPage);
 _external(go);
-_external(_addController);
 _external(_uploadResponse);
-
+_expose(addToInitChord);
+_external(_addImportToInitChord, '_addImportToInitChord');
+_expose(setInitMode);
+_expose(unsetInitMode);

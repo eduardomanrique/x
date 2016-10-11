@@ -1,0 +1,163 @@
+ver o problema do popup
+	nao proteje o fundo
+	nao fecha se abrir dois iguais
+
+*********
+async servlet 3.1
+
+melhorar autocomplete
+	fazer o autocomplete mais dinamico. Ex, se acaso estiver vazio, aparecer uma opcao de cadastrar novo
+erro no js parser
+	[1,2].join()
+	"asdf".length
+	if(!(alteracao && i == indiceAlteracao)
+			&& listaEstoque[i].produto.id == produto.id){
+		 encontrou = true;
+		 break;
+	}
+	
+	--
+	 var iterator = {
+    current:0,
+    next:X.$(function(){
+      return ((this.current) < (bindArray.length) ? bindArray[undefined] : null);
+      //em bindArray[undefined] era pra ser bindArray[this.current]
+    })
+  };
+  
+  --
+  
+  var iterator = new X.$(function(){
+    var current = 0;
+    this.next = X.$(function(){
+      return ((current) < (bindArray.length) ? bindArray[undefined] : null);
+    });
+  })();
+  
+  era pra ser
+  
+  var iterator = new function(){
+		var current = 0;
+		this.next = function(){
+			return current < bindArray.length ? bindArray[current++] : null;
+		};
+	};  e nao funciona
+  ---
+  X.defineProperty(this, 'funcao', getFuncao, setFuncao);
+  esta ficando
+  X.defineProperty(, 'funcao', getFuncao, setFuncao);
+
+?? id de elementos modais
+ver TODOs
+focus no autocomplete
+new modules (server and client)
+melhorar DAO. Pensar bem
+melhorar deteccao de erros
+fazer a annotation que verifica qual property nao deve vir do server
+	alterar o xjson parser que quando pega do cliente, se a property tiver a annotation deixa em branco
+fazer o metodo que faz merge de objetos automatico ao salvar
+definir _c e _ no script da pagina
+substituir xtype por tipos html5
+html5: http://brian.io/slides/beyond-html5/#/34
+	drag drop
+	web workers
+	server sent events
+	sockets
+	cross document messaging
+	channel messaging
+	
+	navigator.offLine
+	appcache (
+	is a douchebag btw
+	)
+	web storage (save yourself time: use 
+	lawnchair
+	)
+	websql (no not want) *
+	indexeddb (want) *
+	various file apis *
+////esta mais ou menos: deixar as vars nos x*.js com nome privado (_x_...) para nao conflitar com os evals
+Usar Proxy javascript para construir html em components
+a url xurl deve ser configuravel
+nao precisa mais de beforeShowModal
+xparams.js
+	mudar o nome para xsession. Deixar o valor no storage e usar etag para ver se precisa baixar novamente
+xrequiredsources esta ficando no html
+nao esta construindo lista ou objeto quando se faz: "<input xbind="obj.list[0].item">"
+se campo esta vazio, deixar com null no objeto
+_configEventHref: interceptar todos os cliques em href tambem e nao so os que forem javascript:
+remover os models de xvisual
+repensar os input xtypes
+no _createHTML nao deixar importar um recurso mais de uma vez? Ver se da algum problema
+
+mudar tudo para hidden attributes nos elementos? funciona pra text node...
+erro no parser se for ex: <button><</button>
+ver beforeShowModal
+ver integraco com outros js frameworks
+modal indepentende (tipo um portlet) 
+	modal que nao interfere no funcionamento de outras janelas (provavelmente colocar como link na pagina apenas)
+criar o session (usar para mensagens, etc)
+tags script com comentario estragam. Porque esta tirando os newline
+melhorar deteccao de erro de parse de html
+erro em iterator nao mostra qual o erro
+isso de problema (o small ficou como texto):
+					<p>
+						${xuser.dadosPessoais.nome}
+						<small>${xuser.cargo.nome}</small>
+	                </p>
+colocar <tag asdf="asdf""> da erro de atribute invalido
+fazer autocomplete com select2
+${} esta com problemas se for ${a='{'}
+erro em tabela, nao esta escondendo o paginador se a qtd retornada tem menos que uma pagina
+TESTES:
+	selenium
+	test XJSon
+	test XHtmlParser
+	test input
+		
+	componentes
+		methods
+			getBindingMethods
+			load
+			onReady
+			bindToHandle
+			onReady(comp, ctx)
+			getChildElementsInfo
+			onVisible(comp, ctx)
+			getHtml(comp)
+			update (novo metodo, para substituir registerUpdatable)
+		insertComp
+	error pages
+	labels
+	templates
+	ref objects
+	import util js
+		onInit
+		protecao de contexto
+	modal
+		onInit
+		protecao de contexto
+		testar toggle (parece que ta chamando afterLoadController toda vez)
+		testar modal em iterator
+		template
+	autocomplete
+		user defined classes
+		in iterator
+	iterator
+		testar iterator dinamico
+		com modal
+		removendo item do meio e mantendo o foco
+	testar erros (fazer algo errado e esperar um erro)
+	component inside iterator
+	dynattr inside iterator
+	complex binds
+		bind with index in array
+		...
+		
+		
+		
+tratamento de erro
+	parametro de server operation invalido
+	quando tem um script invalido no server mostar erro generico. Mostrar um erro melhor	
+	
+	
